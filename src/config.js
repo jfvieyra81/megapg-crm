@@ -1,0 +1,4 @@
+// Supabase Cloud Sync Configuration
+
+export const SUPABASE_URL = "https://avkgsmlsenkwsgbiwojk.supabase.co";
+export const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF2a2dzbWxzZW5rd3NnYml3b2prIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxODI5NzAsImV4cCI6MjA5MDc1ODk3MH0.zq-eqZ3_rTcQ_v0oMfC2gcZw4RqiVlHtBFuM9kJoJww";
