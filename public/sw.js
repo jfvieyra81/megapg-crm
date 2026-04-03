@@ -1,4 +1,4 @@
-const CACHE = 'megapg-v5';
+const CACHE = 'megapg-v6';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
