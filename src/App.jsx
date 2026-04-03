@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { jsPDF } from "jspdf";
+import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 const PRODUCTS = [
   // SLAPS LOLLIPOPS
@@ -50,15 +51,40 @@ const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
 const dSince = (d) => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
 const pF = (id) => PRODUCTS.find(p => p.id === id);
+
+// Supabase config from config.js
+const SUPA_URL = SUPABASE_URL !== "YOUR_PROJECT_URL_HERE" ? SUPABASE_URL : null;
+const SUPA_KEY = SUPABASE_KEY !== "YOUR_ANON_KEY_HERE" ? SUPABASE_KEY : null;
+const SUPA_HEADERS = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
+const cloudEnabled = !!(SUPA_URL && SUPA_KEY);
+
 const S = {
   load() {
-    try {
-      const raw = localStorage.getItem("megapg-data");
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+    try { const raw = localStorage.getItem("megapg-data"); return raw ? JSON.parse(raw) : null; } catch { return null; }
   },
   save(data) {
-    try { localStorage.setItem("megapg-data", JSON.stringify(data)); } catch(e) { console.error("Save failed:", e); }
+    const stamped = { ...data, updated_at: new Date().toISOString() };
+    try { localStorage.setItem("megapg-data", JSON.stringify(stamped)); } catch(e) { console.error("Save failed:", e); }
+    // Push to cloud in background
+    if (cloudEnabled) this.push(stamped).catch(() => {});
+    return stamped;
+  },
+  async push(data) {
+    if (!cloudEnabled) return false;
+    const body = { id: "main", data: JSON.stringify(data), updated_at: data.updated_at || new Date().toISOString() };
+    const resp = await fetch(`${SUPA_URL}/rest/v1/sync_data?id=eq.main`, { method: "PATCH", headers: SUPA_HEADERS, body: JSON.stringify(body) });
+    return resp.ok;
+  },
+  async pull() {
+    if (!cloudEnabled) return null;
+    try {
+      const resp = await fetch(`${SUPA_URL}/rest/v1/sync_data?id=eq.main&select=data,updated_at`, { headers: SUPA_HEADERS });
+      if (!resp.ok) return null;
+      const rows = await resp.json();
+      if (!rows?.[0]?.data) return null;
+      const cloud = typeof rows[0].data === "string" ? JSON.parse(rows[0].data) : rows[0].data;
+      return cloud;
+    } catch { return null; }
   },
 };
 
@@ -495,7 +521,6 @@ export default function App() {
   const saved = S.load();
   const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], init: true };
   if (!saved?.init) S.save(initData);
-  // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
 
   const [tab, setTab] = useState("dashboard");
@@ -506,9 +531,57 @@ export default function App() {
   const [visits, setVisits] = useState(initData.visits);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
+  const [syncStatus, setSyncStatus] = useState(cloudEnabled ? "syncing" : "off"); // off | syncing | synced | error
   const stateRef = useRef(initData);
 
-  const sv = useCallback((type, data) => { stateRef.current = { ...stateRef.current, [type]: data }; S.save({ ...stateRef.current, init: true }); }, []);
+  // Apply data from any source (cloud pull, import, etc.)
+  const applyData = useCallback((data) => {
+    stateRef.current = data;
+    setClients(data.clients || []); setOrders(data.orders || []); setInventory(data.inventory || []); setPurchases(data.purchases || []); setVisits(data.visits || []);
+  }, []);
+
+  // Save to localStorage + push to cloud
+  const sv = useCallback((type, data) => {
+    stateRef.current = { ...stateRef.current, [type]: data };
+    S.save({ ...stateRef.current, init: true });
+    setSyncStatus(cloudEnabled ? "synced" : "off");
+  }, []);
+
+  // Pull from cloud on mount — if cloud is newer, use it
+  useEffect(() => {
+    if (!cloudEnabled) return;
+    S.pull().then(cloud => {
+      if (!cloud?.init) { setSyncStatus("synced"); return; }
+      const localTime = new Date(stateRef.current.updated_at || 0).getTime();
+      const cloudTime = new Date(cloud.updated_at || 0).getTime();
+      if (cloudTime > localTime) {
+        applyData(cloud);
+        try { localStorage.setItem("megapg-data", JSON.stringify(cloud)); } catch {}
+      }
+      setSyncStatus("synced");
+    }).catch(() => setSyncStatus("error"));
+  }, [applyData]);
+
+  // Manual sync: pull latest from cloud
+  const manualSync = async () => {
+    if (!cloudEnabled) return;
+    setSyncStatus("syncing");
+    try {
+      // First push local to cloud
+      await S.push({ ...stateRef.current, init: true });
+      // Then pull (in case other device pushed something newer)
+      const cloud = await S.pull();
+      if (cloud?.init) {
+        const localTime = new Date(stateRef.current.updated_at || 0).getTime();
+        const cloudTime = new Date(cloud.updated_at || 0).getTime();
+        if (cloudTime > localTime) {
+          applyData(cloud);
+          try { localStorage.setItem("megapg-data", JSON.stringify(cloud)); } catch {}
+        }
+      }
+      setSyncStatus("synced");
+    } catch { setSyncStatus("error"); }
+  };
 
   const saveVisit = (visit) => {
     const isEdit = visits.some(v => v.id === visit.id);
@@ -533,22 +606,25 @@ export default function App() {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
         const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [] };
-        stateRef.current = data; S.save({ ...data, init: true });
-        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits);
+        applyData(data); S.save({ ...data, init: true });
         setTab("dashboard");
       } catch {}
     };
     reader.readAsText(file); e.target.value = "";
   };
 
+  const syncColors = { off: "#999", syncing: "#D35400", synced: "#1B7340", error: "#C41E3A" };
+  const syncLabels = { off: "Local", syncing: "Syncing...", synced: "Synced ✓", error: "Sync error" };
+
   const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v4</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v5</span>
+        {cloudEnabled && <button onClick={manualSync} disabled={syncStatus === "syncing"} style={{ fontSize: 10, color: syncColors[syncStatus], background: "none", border: `1px solid ${syncColors[syncStatus]}`, borderRadius: 4, padding: "2px 8px", cursor: syncStatus === "syncing" ? "default" : "pointer" }}>{syncLabels[syncStatus]}</button>}
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); applyData(empty); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
