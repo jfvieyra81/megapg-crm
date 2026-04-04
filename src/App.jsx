@@ -47,11 +47,42 @@ const LOW = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
 const FOLLOWUP_DAYS = 21;
 const EXPENSE_CATS = ["Gas/Mileage", "Samples", "Phone/Internet", "Packaging/Supplies", "Vehicle maintenance", "Insurance", "Meals (business)", "Marketing/Printing", "Shipping (UPS/USPS)", "Storage/Rent", "Bank/Payment fees", "Permits/Licenses", "Other"];
+
+// Mix case system — 7 regular Slaps flavors (25 bags each, same price)
+const SLAPS_FLAVORS = ["slaps-mix", "slaps-tam", "slaps-mgo", "slaps-wtm", "slaps-app", "slaps-dbx", "slaps-pkl"];
+const MIX_TARGET = 25;
+const MIX_PRICE = 40;
+const MIX_COST = 22;
+const MIX_PRESETS = [
+  { id: "mix-clasico", name: "Mix Clásico", desc: "10 Tam + 5 DblX + 5 Mgo + 5 Mix", components: [
+    { productId: "slaps-tam", bags: 10 }, { productId: "slaps-dbx", bags: 5 },
+    { productId: "slaps-mgo", bags: 5 }, { productId: "slaps-mix", bags: 5 }
+  ]},
+  { id: "mix-picoso", name: "Mix Picoso", desc: "10 Pickle + 10 DblX + 5 Tam", components: [
+    { productId: "slaps-pkl", bags: 10 }, { productId: "slaps-dbx", bags: 10 },
+    { productId: "slaps-tam", bags: 5 }
+  ]},
+  { id: "mix-frutal", name: "Mix Frutal", desc: "10 Mango + 10 Watermelon + 5 Apple", components: [
+    { productId: "slaps-mgo", bags: 10 }, { productId: "slaps-wtm", bags: 10 },
+    { productId: "slaps-app", bags: 5 }
+  ]},
+];
+const MIX_META = { "mix-custom": { name: "Slaps Mix Custom", price: MIX_PRICE, cost: MIX_COST } };
+MIX_PRESETS.forEach(p => { MIX_META[p.id] = { name: p.name, price: MIX_PRICE, cost: MIX_COST }; });
+
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
 const dSince = (d) => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
-const pF = (id) => PRODUCTS.find(p => p.id === id);
+const pF = (id) => PRODUCTS.find(p => p.id === id) || (MIX_META[id] ? { id, ...MIX_META[id], bags: MIX_TARGET, sku: "" } : null);
+// Display fractional stock as cases+bags
+const fmtSt = (stock, p) => {
+  if (!p || stock === Math.floor(stock)) return String(Math.round(stock));
+  const full = Math.floor(stock);
+  const rem = Math.round((stock - full) * (p.bags || 1));
+  if (full === 0) return `${rem}b`;
+  return `${full}cs+${rem}b`;
+};
 
 // Supabase config from config.js
 const SUPA_URL = SUPABASE_URL !== "YOUR_PROJECT_URL_HERE" ? SUPABASE_URL : null;
@@ -177,24 +208,51 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
 };
 
 const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
-  const [sf, setSf] = useState(false); const [delConfirm, setDelConfirm] = useState(null); const delORef = useRef(null); const [stockAck, setStockAck] = useState(false); const [form, setForm] = useState({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" });
-  const openN = () => { setForm({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" }); setSf(true); };
+  const [sf, setSf] = useState(false); const [delConfirm, setDelConfirm] = useState(null); const delORef = useRef(null); const [stockAck, setStockAck] = useState(false);
+  const [form, setForm] = useState({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" });
+  const [showMixer, setShowMixer] = useState(false);
+  const [mixBags, setMixBags] = useState({});
+  const [mixPreset, setMixPreset] = useState("");
+
+  const openN = () => { setForm({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" }); setShowMixer(false); setMixBags({}); setMixPreset(""); setSf(true); };
   const addL = () => setForm(p => ({ ...p, items: [...p.items, { productId: "", qty: 1 }] }));
   const remL = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
   const upL = (i, f, v) => setForm(p => { const items = [...p.items]; items[i] = { ...items[i], [f]: f === "qty" ? Math.max(1, parseInt(v) || 1) : v }; return { ...p, items }; });
   const cl = clients.find(c => c.id === form.clientId); const disc = cl ? TIER_DISC[cl.tier] || 0 : 0;
+
+  // Mix helpers
+  const mixTotal = Object.values(mixBags).reduce((s, v) => s + (parseInt(v) || 0), 0);
+  const mixReady = mixTotal === MIX_TARGET;
+  const applyPreset = (preset) => {
+    const bags = {}; preset.components.forEach(c => { bags[c.productId] = c.bags; });
+    setMixBags(bags); setMixPreset(preset.id);
+  };
+  const addMixToOrder = () => {
+    if (!mixReady) return;
+    const components = Object.entries(mixBags).filter(([_, b]) => (parseInt(b) || 0) > 0).map(([pid, b]) => ({ productId: pid, bags: parseInt(b) }));
+    const mixId = mixPreset || "mix-custom";
+    setForm(p => ({ ...p, items: [...p.items.filter(it => it.productId), { productId: mixId, qty: 1, mixComponents: components }] }));
+    setShowMixer(false); setMixBags({}); setMixPreset("");
+  };
+
   const calcT = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.price * it.qty * (1 - disc) : 0); }, 0);
   const calcC = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.cost * it.qty : 0); }, 0);
 
-  // FIX #5: Checar stock antes de guardar orden
   const getStockWarnings = () => {
     const warnings = [];
     form.items.filter(it => it.productId).forEach(it => {
-      const inv = inventory.find(i => i.productId === it.productId);
-      const avail = inv?.stock || 0;
-      if (it.qty > avail) {
-        const p = pF(it.productId);
-        warnings.push(`${p?.name}: requesting ${it.qty}, only ${avail} in stock`);
+      if (it.mixComponents) {
+        // Mix item — check each component in bags→cases
+        it.mixComponents.forEach(mc => {
+          const inv = inventory.find(i => i.productId === mc.productId);
+          const avail = inv?.stock || 0;
+          const needed = (mc.bags / MIX_TARGET) * it.qty;
+          if (needed > avail) { const p = pF(mc.productId); warnings.push(`${p?.name}: need ${mc.bags * it.qty}bags (${needed.toFixed(1)}cs), only ${fmtSt(avail, p)} avail`); }
+        });
+      } else {
+        const inv = inventory.find(i => i.productId === it.productId);
+        const avail = inv?.stock || 0;
+        if (it.qty > avail) { const p = pF(it.productId); warnings.push(`${p?.name}: requesting ${it.qty}, only ${fmtSt(avail, p)} in stock`); }
       }
     });
     return warnings;
@@ -203,38 +261,96 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
   const saveO = () => { if (!form.clientId || form.items.every(it => !it.productId)) return;
     const warnings = getStockWarnings();
     if (warnings.length > 0 && !stockAck) { setStockAck(true); return; }
-    const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
+    const vi = form.items.filter(it => it.productId); const total = calcT();
+    const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() };
+    // Deduct inventory
+    const ni = [...inventory];
+    vi.forEach(it => {
+      if (it.mixComponents) {
+        // Mix: deduct fractional cases from each component
+        it.mixComponents.forEach(mc => {
+          const casesToDeduct = (mc.bags / MIX_TARGET) * it.qty;
+          const idx = ni.findIndex(inv => inv.productId === mc.productId);
+          if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, Math.round((ni[idx].stock - casesToDeduct) * 100) / 100) };
+        });
+      } else {
+        // Regular: deduct whole cases
+        const idx = ni.findIndex(inv => inv.productId === it.productId);
+        if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) };
+      }
+    });
+    setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; });
+    setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false);
+  };
   const upSt = (id, st) => setOrders(prev => { const n = prev.map(o => o.id === id ? { ...o, status: st } : o); saveAll("orders", n); return n; });
   const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
-  const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
+  const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty, ...(it.mixComponents ? { mixComponents: it.mixComponents } : {}) })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
+
   return <div>
     <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={openN}>+ New order</Btn></div>
     {orders.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No orders yet.</p>}
     {orders.slice().reverse().map(o => { const c = clients.find(x => x.id === o.clientId); const tc = o.items.reduce((a, it) => a + it.qty, 0); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); const prof = (o.total || 0) - cost;
-      return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
-        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}</div>
+      const hasMix = o.items.some(it => it.mixComponents);
+      return <div key={o.id} style={{ padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{hasMix && <Badge text="MIX" color="#6C3483" />}{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}><div style={{ textAlign: "right", marginRight: 4 }}><div style={{ fontWeight: 700 }}>{fmt(o.total)}</div><div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div></div>
         <select value={o.status} onChange={e => upSt(o.id, e.target.value)} style={{ padding: "3px 6px", border: "1px solid #ddd", borderRadius: 4, fontSize: 11, background: o.status === "paid" ? "#E8F5E8" : o.status === "delivered" ? "#EBF5FB" : "#FDF2E9" }}><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="paid">Paid</option></select>
         {c?.phone && <WaBtn phone={c.phone} msg={o.status !== "paid" ? waPayment(o, c) : waOrder(o, c)} label={o.status !== "paid" ? "Remind" : "WA"} small />}
         <Btn small onClick={() => qReorder(o)} style={{ fontSize: 10 }}>Reorder</Btn><Btn small onClick={() => { setRO(o); setTab("receipt"); }} style={{ fontSize: 10 }}>Receipt</Btn>
-        <Btn small danger onClick={() => delO(o.id)} style={delConfirm === o.id ? { fontSize: 10, minWidth: 52, background: "#8B0000" } : { fontSize: 10 }}>{delConfirm === o.id ? "Sure?" : "✕"}</Btn></div></div>; })}
+        <Btn small danger onClick={() => delO(o.id)} style={delConfirm === o.id ? { fontSize: 10, minWidth: 52, background: "#8B0000" } : { fontSize: 10 }}>{delConfirm === o.id ? "Sure?" : "✕"}</Btn></div></div>
+        {hasMix && <div style={{ fontSize: 11, color: "#6C3483", marginTop: 4, paddingLeft: 8, borderLeft: "2px solid #6C3483" }}>{o.items.filter(it => it.mixComponents).map((it, i) => <div key={i}>{pF(it.productId)?.name || "Mix"}: {it.mixComponents.map(mc => `${pF(mc.productId)?.name?.replace("Slaps ", "")} ×${mc.bags}`).join(", ")}</div>)}</div>}
+      </div>; })}
+
     {sf && <Modal title="New order" onClose={() => setSf(false)} wide>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><div style={{ marginBottom: 10 }}><label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>Client *</label><select value={form.clientId} onChange={e => setForm(p => ({ ...p, clientId: e.target.value }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.tier})</option>)}</select></div><Inp label="Date" type="date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} /></div>
       {form.clientId && cl && <div style={{ fontSize: 12, color: "#1B7340", marginBottom: 10, padding: "6px 10px", background: "#E8F5E8", borderRadius: 6 }}>{cl.name} — {cl.tier} {disc > 0 ? `(${Math.round(disc * 100)}% off)` : "(list price)"}</div>}
       <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Items</label>
       {form.items.map((it, i) => {
-        // FIX #5: Mostrar stock disponible y warning visual
+        if (it.mixComponents) {
+          // Display mix item inline
+          return <div key={i} style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", padding: "6px 10px", background: "#F4ECF7", borderRadius: 6, border: "1px solid #D2B4DE" }}>
+            <div style={{ flex: 2 }}>
+              <b style={{ fontSize: 12, color: "#6C3483" }}>{pF(it.productId)?.name || "Slaps Mix"}</b>
+              <div style={{ fontSize: 11, color: "#777" }}>{it.mixComponents.map(mc => `${pF(mc.productId)?.name?.replace("Slaps ", "")} ×${mc.bags}`).join(", ")}</div>
+            </div>
+            <input type="number" min="1" value={it.qty} onChange={e => upL(i, "qty", e.target.value)} style={{ width: 55, padding: "7px", border: "1px solid #D2B4DE", borderRadius: 6, fontSize: 13, textAlign: "center" }} />
+            <span style={{ fontSize: 12, color: "#1B7340", minWidth: 60, fontWeight: 600 }}>{fmt(MIX_PRICE * it.qty * (1 - disc))}</span>
+            <button onClick={() => remL(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#C41E3A", fontSize: 16 }}>✕</button>
+          </div>;
+        }
         const inv = it.productId ? inventory.find(x => x.productId === it.productId) : null;
         const avail = inv?.stock || 0;
+        const p = it.productId ? pF(it.productId) : null;
         const overStock = it.productId && it.qty > avail;
         return <div key={i} style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
-          <select value={it.productId} onChange={e => upL(i, "productId", e.target.value)} style={{ flex: 2, padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Product --</option>{PRODUCTS.map(p => { const pInv = inventory.find(x => x.productId === p.id); return <option key={p.id} value={p.id}>{p.name} ({fmt(p.price)}) — {pInv?.stock || 0} avail</option>; })}</select>
+          <select value={it.productId} onChange={e => upL(i, "productId", e.target.value)} style={{ flex: 2, padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Product --</option>{PRODUCTS.map(pr => { const pInv = inventory.find(x => x.productId === pr.id); return <option key={pr.id} value={pr.id}>{pr.name} ({fmt(pr.price)}) — {fmtSt(pInv?.stock || 0, pr)} avail</option>; })}</select>
           <input type="number" min="1" value={it.qty} onChange={e => upL(i, "qty", e.target.value)} style={{ width: 55, padding: "7px", border: `1px solid ${overStock ? "#C41E3A" : "#ddd"}`, borderRadius: 6, fontSize: 13, textAlign: "center", background: overStock ? "#FDE8E8" : "#fff" }} />
           <span style={{ fontSize: 12, color: "#1B7340", minWidth: 60, fontWeight: 600 }}>{it.productId ? fmt(pF(it.productId)?.price * it.qty * (1 - disc)) : ""}</span>
-          {overStock && <span style={{ fontSize: 10, color: "#C41E3A", fontWeight: 700, whiteSpace: "nowrap" }}>only {avail}!</span>}
+          {overStock && <span style={{ fontSize: 10, color: "#C41E3A", fontWeight: 700, whiteSpace: "nowrap" }}>only {fmtSt(avail, p)}!</span>}
           {form.items.length > 1 && <button onClick={() => remL(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#C41E3A", fontSize: 16 }}>✕</button>}
         </div>; })}
-      <Btn small onClick={addL} style={{ marginTop: 8 }}>+ Add product</Btn>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}><Btn small onClick={addL}>+ Add product</Btn><Btn small onClick={() => { setShowMixer(true); setMixBags({}); setMixPreset(""); }} style={{ background: "#6C3483", color: "#fff" }}>🔀 Add Mix Case</Btn></div>
+
+      {showMixer && <div style={{ margin: "12px 0", padding: "14px 16px", background: "#F4ECF7", borderRadius: 8, border: "1px solid #D2B4DE" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <b style={{ color: "#6C3483", fontSize: 14 }}>🔀 Mix Case Builder ({mixTotal}/{MIX_TARGET} bags)</b>
+          <button onClick={() => setShowMixer(false)} style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: "#999" }}>✕</button>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>{MIX_PRESETS.map(p => <Btn key={p.id} small onClick={() => applyPreset(p)} style={mixPreset === p.id ? { background: "#6C3483", color: "#fff" } : { border: "1px solid #6C3483", color: "#6C3483" }}>{p.name}</Btn>)}<Btn small onClick={() => { setMixBags({}); setMixPreset(""); }}>Clear</Btn></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px" }}>{SLAPS_FLAVORS.map(fid => {
+          const p = pF(fid); const inv = inventory.find(x => x.productId === fid); const avail = inv?.stock || 0; const totalBags = Math.round(avail * (p?.bags || 25));
+          return <div key={fid} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+            <span style={{ flex: 1, fontSize: 12 }}>{p?.name?.replace("Slaps ", "")}</span>
+            <span style={{ fontSize: 10, color: "#999", minWidth: 40 }}>{totalBags}b avail</span>
+            <input type="number" min="0" max={MIX_TARGET} value={mixBags[fid] || ""} onChange={e => setMixBags(prev => ({ ...prev, [fid]: e.target.value }))} placeholder="0" style={{ width: 50, padding: "4px", border: "1px solid #D2B4DE", borderRadius: 4, fontSize: 13, textAlign: "center" }} />
+          </div>; })}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: mixReady ? "#1B7340" : mixTotal > MIX_TARGET ? "#C41E3A" : "#D35400" }}>{mixTotal}/{MIX_TARGET} bags {mixReady ? "✓ Ready!" : mixTotal > MIX_TARGET ? "— too many!" : ""}</div>
+          <Btn primary onClick={addMixToOrder} disabled={!mixReady} style={{ background: mixReady ? "#6C3483" : "#ccc" }}>Add mix to order</Btn>
+        </div>
+      </div>}
+
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea style={{ marginTop: 10 }} />
       {getStockWarnings().length > 0 && <div style={{ background: "#FDF2E9", padding: "8px 12px", borderRadius: 6, marginTop: 8, fontSize: 12, color: "#D35400", borderLeft: "3px solid #D35400" }}>
         <b>Stock warnings:</b> {getStockWarnings().join("; ")}
@@ -257,10 +373,11 @@ const Inventory = ({ inventory, setInventory, orders, saveAll }) => {
   return <div>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}><div style={{ display: "flex", gap: 10 }}><Card title="Cost" value={fmt(tC)} color="#C41E3A" /><Card title="Retail" value={fmt(tR)} color="#1B7340" /><Card title="Potential profit" value={fmt(tR - tC)} color="#6C3483" /></div><Btn primary onClick={openR}>+ Manual restock</Btn></div>
     {PRODUCTS.map(p => { const inv = inventory.find(i => i.productId === p.id); const st = inv?.stock || 0; const low = st > 0 && st <= LOW; const out = st === 0; const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const wr = weeks > 0 ? Math.round(sold / weeks * 10) / 10 : 0; const wl = wr > 0 ? Math.round(st / wr * 10) / 10 : null;
+      const hasFrac = st !== Math.floor(st);
       return <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 12px", background: out ? "#FDE8E8" : low ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 3, fontSize: 13 }}>
         <div><b>{p.name}</b> <span style={{ color: "#999", fontSize: 11 }}>{p.sku}</span></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}><span style={{ fontSize: 11, color: "#999" }}>{fmt(p.cost)} / {fmt(p.price)}</span><span style={{ fontSize: 11, color: "#777" }}>~{wr}/wk</span>{wl !== null && wl < 3 && <Badge text={`${wl}wk`} color="#C41E3A" />}<span style={{ fontSize: 18, fontWeight: 900, color: out ? "#C41E3A" : low ? "#D35400" : "#1B7340", minWidth: 50, textAlign: "right" }}>{st}</span>{(out || low) && <Badge text={out ? "OUT" : "LOW"} color={out ? "#C41E3A" : "#D35400"} />}</div></div>; })}
-    {sr && <Modal title="Manual restock" onClose={() => setSr(false)}><p style={{ fontSize: 13, color: "#777", marginBottom: 12 }}>For auto-restock from invoices, use Purchases tab.</p>{PRODUCTS.map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}><span style={{ fontSize: 13 }}>{p.name} <span style={{ color: "#999", fontSize: 11 }}>(stock: {inventory.find(i => i.productId === p.id)?.stock || 0})</span></span><input type="number" min="0" value={ri.find(r => r.productId === p.id)?.add || 0} onChange={e => setRi(prev => prev.map(r => r.productId === p.id ? { ...r, add: parseInt(e.target.value) || 0 } : r))} style={{ width: 60, padding: "5px", border: "1px solid #ddd", borderRadius: 4, fontSize: 13, textAlign: "center" }} /></div>)}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}><Btn onClick={() => setSr(false)}>Cancel</Btn><Btn primary onClick={doR}>Save</Btn></div></Modal>}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}><span style={{ fontSize: 11, color: "#999" }}>{fmt(p.cost)} / {fmt(p.price)}</span><span style={{ fontSize: 11, color: "#777" }}>~{wr}/wk</span>{wl !== null && wl < 3 && <Badge text={`${wl}wk`} color="#C41E3A" />}<span style={{ fontSize: 18, fontWeight: 900, color: out ? "#C41E3A" : low ? "#D35400" : "#1B7340", minWidth: 50, textAlign: "right" }}>{fmtSt(st, p)}</span>{hasFrac && <span style={{ fontSize: 10, color: "#777" }}>({Math.round(st * p.bags)}b)</span>}{(out || low) && <Badge text={out ? "OUT" : "LOW"} color={out ? "#C41E3A" : "#D35400"} />}</div></div>; })}
+    {sr && <Modal title="Manual restock" onClose={() => setSr(false)}><p style={{ fontSize: 13, color: "#777", marginBottom: 12 }}>Enter cases to add. For auto-restock from invoices, use Purchases tab.</p>{PRODUCTS.map(p => { const curSt = inventory.find(i => i.productId === p.id)?.stock || 0; return <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}><span style={{ fontSize: 13 }}>{p.name} <span style={{ color: "#999", fontSize: 11 }}>(stock: {fmtSt(curSt, p)}{curSt !== Math.floor(curSt) ? ` = ${Math.round(curSt * p.bags)}b` : ""})</span></span><input type="number" min="0" value={ri.find(r => r.productId === p.id)?.add || 0} onChange={e => setRi(prev => prev.map(r => r.productId === p.id ? { ...r, add: parseInt(e.target.value) || 0 } : r))} style={{ width: 60, padding: "5px", border: "1px solid #ddd", borderRadius: 4, fontSize: 13, textAlign: "center" }} /></div>; })}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}><Btn onClick={() => setSr(false)}>Cancel</Btn><Btn primary onClick={doR}>Save</Btn></div></Modal>}
   </div>;
 };
 
@@ -410,7 +527,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
     <div style={{ maxWidth: 500, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
       <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}><div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG DISTRIBUTIONS</div><div style={{ fontSize: 11, color: "#777" }}>Authentic Mexican Candy • Northern California</div><div style={{ fontSize: 12, marginTop: 4 }}>José Flores • (707) 360-7420 • megapg.norcal@gmail.com</div></div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 12 }}><div><b>{cl?.name}</b>{cl?.address && <div style={{ color: "#777" }}>{cl.address}</div>}{cl?.phone && <div style={{ color: "#777" }}>{cl.phone}</div>}</div><div style={{ textAlign: "right" }}><b>#{order.id.slice(-6).toUpperCase()}</b><div style={{ color: "#777" }}>{fmtD(order.date)}</div><Badge text={order.status} color={ST_CLR[order.status]} /></div></div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Product</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Qty</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Unit</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody></table>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Product</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Qty</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Unit</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <><tr key={i} style={{ borderBottom: it.mixComponents ? "none" : "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>{it.mixComponents && <tr key={`${i}-mix`} style={{ borderBottom: "1px solid #eee" }}><td colSpan={4} style={{ padding: "2px 0 6px 12px", fontSize: 10, color: "#6C3483" }}>{it.mixComponents.map(mc => `${pF(mc.productId)?.name?.replace("Slaps ", "")} ×${mc.bags}`).join(", ")}</td></tr>}</>; })}</tbody></table>
       <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>{disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Discount ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}<div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div></div>
       {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notes: {order.notes}</div>}
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>Thank you! • megapgcandies.com • slapslollipop.com</div>
