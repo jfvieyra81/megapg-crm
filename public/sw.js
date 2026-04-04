@@ -1,4 +1,4 @@
-const CACHE = 'megapg-v6';
+const CACHE = 'megapg-v7';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
@@ -6,19 +6,20 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-    .then(() => self.clients.claim())
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', e => {
-  // Network first — always get latest from server, fall back to cache if offline
+  if (e.request.method !== 'GET') return;
   e.respondWith(
     fetch(e.request)
-      .then(resp => {
-        const clone = resp.clone();
+      .then(res => {
+        const clone = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, clone));
-        return resp;
+        return res;
       })
       .catch(() => caches.match(e.request))
   );
