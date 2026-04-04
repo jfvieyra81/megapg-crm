@@ -46,6 +46,7 @@ const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
 const LOW = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
 const FOLLOWUP_DAYS = 21;
+const EXPENSE_CATS = ["Gas/Mileage", "Samples", "Phone/Internet", "Packaging/Supplies", "Vehicle maintenance", "Insurance", "Meals (business)", "Marketing/Printing", "Shipping (UPS/USPS)", "Storage/Rent", "Bank/Payment fees", "Permits/Licenses", "Other"];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -121,10 +122,12 @@ const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "f
 const Inp = ({ label, value, onChange, type, placeholder, style: s, options, textarea }) => <div style={{ marginBottom: 10, ...s }}>{label && <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>{label}</label>}{options ? <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{options.map(o => <option key={o} value={o}>{o}</option>)}</select> : textarea ? <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={3} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, resize: "vertical" }} /> : <input type={type || "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />}</div>;
 const ST = ({ children }) => <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10, marginTop: 16, color: "#C41E3A", borderBottom: "2px solid #C41E3A", paddingBottom: 4 }}>{children}</h3>;
 
-const Dashboard = ({ clients, orders, inventory }) => {
+const Dashboard = ({ clients, orders, inventory, expenses }) => {
   const tRev = orders.reduce((s, o) => s + (o.total || 0), 0);
   const tCost = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
   const gP = tRev - tCost;
+  const tExp = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  const netP = gP - tExp;
   const tCases = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + it.qty, 0), 0);
   const tStock = inventory.reduce((s, it) => s + it.stock, 0);
   const pend = orders.filter(o => o.status !== "paid").reduce((s, o) => s + (o.total || 0), 0);
@@ -137,7 +140,8 @@ const Dashboard = ({ clients, orders, inventory }) => {
   // FIX #4: Velocidad semanal con semanas reales
   const pVel = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const st = inventory.find(i => i.productId === p.id)?.stock || 0; const wr = weeks > 0 ? Math.round(sold / weeks * 10) / 10 : 0; const wk = wr > 0 ? Math.round(st / wr * 10) / 10 : st > 0 ? 99 : 0; return { ...p, sold, st, wr, wk }; }).sort((a, b) => b.sold - a.sold);
   return <div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Revenue" value={fmt(tRev)} color="#1B7340" /><Card title="Gross profit" value={fmt(gP)} sub={tRev > 0 ? `${Math.round(gP / tRev * 100)}% margin` : ""} color="#1B7340" /><Card title="Cases sold" value={tCases} color="#1A5276" /><Card title="Pending $" value={fmt(pend)} color={pend > 0 ? "#C41E3A" : "#1B7340"} /><Card title="In stock" value={`${tStock} cases`} color="#6C3483" /></div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 8 }}><Card title="Revenue" value={fmt(tRev)} color="#1B7340" /><Card title="Gross profit" value={fmt(gP)} sub={tRev > 0 ? `${Math.round(gP / tRev * 100)}% margin` : ""} color="#1B7340" /><Card title="Cases sold" value={tCases} color="#1A5276" /></div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Expenses" value={fmt(tExp)} color="#D35400" /><Card title="Net profit" value={fmt(netP)} sub={tRev > 0 ? `${Math.round(netP / tRev * 100)}% net` : ""} color={netP >= 0 ? "#1B7340" : "#C41E3A"} /><Card title="Pending $" value={fmt(pend)} color={pend > 0 ? "#C41E3A" : "#1B7340"} /></div>
     {(stale.length > 0 || lowS.length > 0 || outS.length > 0) && <div style={{ background: "#FDF2E9", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #D35400" }}><div style={{ fontSize: 14, fontWeight: 700, color: "#D35400", marginBottom: 6 }}>Action needed</div>{outS.map(i => <div key={i.productId} style={{ fontSize: 12, padding: "2px 0", color: "#C41E3A" }}>OUT: <b>{i.p?.name}</b></div>)}{lowS.map(i => <div key={i.productId} style={{ fontSize: 12, padding: "2px 0", color: "#D35400" }}>LOW: <b>{i.p?.name}</b> — {i.stock} left</div>)}{stale.slice(0, 5).map(c => {
       const lastO = orders.filter(o => o.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
       return <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
@@ -287,17 +291,25 @@ const Purchases = ({ purchases, setPurchases, inventory, setInventory, saveAll }
   </div>;
 };
 
-const Reports = ({ orders, clients, purchases }) => {
+const Reports = ({ orders, clients, purchases, expenses }) => {
   // FIX #4: Usar semanas reales
   const weeks = calcWeeks(orders);
   const md = {}; orders.forEach(o => { const m = o.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; md[m].rev += o.total || 0; md[m].cost += o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); md[m].cases += o.items.reduce((a, it) => a + it.qty, 0); md[m].orders++; });
+  // Add expenses to monthly breakdown
+  expenses.forEach(e => { const m = e.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; if (!md[m].exp) md[m].exp = 0; md[m].exp += e.amount || 0; });
   const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + (p.price * (1 - (o.discount || 0))) * it.qty, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
   const tR = orders.reduce((s, o) => s + (o.total || 0), 0); const tC = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
+  const tExp = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  const netProfit = tR - tC - tExp;
+  // Expense category totals
+  const expCats = {}; expenses.forEach(e => { expCats[e.category] = (expCats[e.category] || 0) + (e.amount || 0); });
   return <div>
     <ST>P&L summary <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)} week span)</span></ST>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Revenue" value={fmt(tR)} color="#1B7340" /><Card title="COGS" value={fmt(tC)} color="#C41E3A" /><Card title="Gross profit" value={fmt(tR - tC)} sub={tR > 0 ? `${Math.round((tR - tC) / tR * 100)}%` : ""} color="#1B7340" /><Card title="Purchased" value={fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))} color="#1A5276" /></div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 8 }}><Card title="Revenue" value={fmt(tR)} color="#1B7340" /><Card title="COGS" value={fmt(tC)} color="#C41E3A" /><Card title="Gross profit" value={fmt(tR - tC)} sub={tR > 0 ? `${Math.round((tR - tC) / tR * 100)}% margin` : ""} color="#1B7340" /></div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Operating expenses" value={fmt(tExp)} color="#D35400" /><Card title="Net profit" value={fmt(netProfit)} sub={tR > 0 ? `${Math.round(netProfit / tR * 100)}% net margin` : ""} color={netProfit >= 0 ? "#1B7340" : "#C41E3A"} /><Card title="Purchased" value={fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))} color="#1A5276" /></div>
+    {Object.keys(expCats).length > 0 && <><ST>Expense breakdown</ST>{Object.entries(expCats).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{cat}</span><span style={{ color: "#C41E3A", fontWeight: 600 }}>{fmt(amt)}</span></div>)}</>}
     <ST>Monthly breakdown</ST>
-    {Object.entries(md).sort().reverse().map(([m, d]) => <div key={m} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><b style={{ minWidth: 70 }}>{m}</b><span>{d.orders} ord</span><span>{d.cases} cases</span><span>Rev: {fmt(d.rev)}</span><span>Cost: {fmt(d.cost)}</span><span style={{ color: "#1B7340", fontWeight: 700 }}>Profit: {fmt(d.rev - d.cost)}</span><span style={{ fontSize: 11, color: "#777" }}>{d.rev > 0 ? Math.round((d.rev - d.cost) / d.rev * 100) : 0}%</span></div>)}
+    {Object.entries(md).sort().reverse().map(([m, d]) => { const exp = d.exp || 0; const net = d.rev - d.cost - exp; return <div key={m} style={{ padding: "7px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between" }}><b style={{ minWidth: 70 }}>{m}</b><span>{d.orders} ord</span><span>{d.cases} cases</span><span>Rev: {fmt(d.rev)}</span><span>COGS: {fmt(d.cost)}</span>{exp > 0 && <span style={{ color: "#D35400" }}>Exp: {fmt(exp)}</span>}<span style={{ color: net >= 0 ? "#1B7340" : "#C41E3A", fontWeight: 700 }}>Net: {fmt(net)}</span></div></div>; })}
     <ST>Product performance</ST>
     {ps.filter(p => p.sold > 0).map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span style={{ minWidth: 160 }}>{p.name}</span><span>{p.sold} cases</span><span>Rev: {fmt(p.rev)}</span><span style={{ color: "#1B7340", fontWeight: 600 }}>Profit: {fmt(p.prof)}</span></div>)}
   </div>;
@@ -403,6 +415,83 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
       {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notes: {order.notes}</div>}
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>Thank you! • megapgcandies.com • slapslollipop.com</div>
     </div></div>;
+};
+
+// ===== EXPENSES =====
+const Expenses = ({ expenses, setExpenses, saveAll }) => {
+  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null);
+  const [delId, setDelId] = useState(null); const delRef = useRef(null);
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), category: "", amount: "", description: "", vendor: "", deductible: true });
+  const [monthFilter, setMonthFilter] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+
+  const openN = () => { setForm({ date: new Date().toISOString().slice(0, 10), category: "", amount: "", description: "", vendor: "", deductible: true }); setEdit(null); setSf(true); };
+  const openE = (ex) => { setForm({ deductible: true, ...ex, amount: String(ex.amount) }); setEdit(ex.id); setSf(true); };
+  const save = () => {
+    if (!form.category || !form.amount || Number(form.amount) <= 0) return;
+    const entry = { ...form, amount: Number(form.amount) };
+    if (edit) { setExpenses(prev => { const n = prev.map(e => e.id === edit ? { ...e, ...entry } : e); saveAll("expenses", n); return n; }); }
+    else { setExpenses(prev => { const n = [...prev, { ...entry, id: uid(), created: new Date().toISOString() }]; saveAll("expenses", n); return n; }); }
+    setSf(false);
+  };
+  const del = (id) => { if (delRef.current === id) { setExpenses(prev => { const n = prev.filter(e => e.id !== id); saveAll("expenses", n); return n; }); delRef.current = null; setDelId(null); } else { delRef.current = id; setDelId(id); setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelId(null); } }, 3000); } };
+
+  const months = [...new Set(expenses.map(e => e.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
+  const fil = expenses.filter(e => (!monthFilter || e.date?.startsWith(monthFilter)) && (!catFilter || e.category === catFilter)).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const totalFil = fil.reduce((s, e) => s + (e.amount || 0), 0);
+  const totalAll = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  const deductible = expenses.filter(e => e.deductible !== false).reduce((s, e) => s + (e.amount || 0), 0);
+
+  // Category summary
+  const catSums = {}; fil.forEach(e => { catSums[e.category] = (catSums[e.category] || 0) + (e.amount || 0); });
+
+  return <div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+      <Card title="Total expenses" value={fmt(totalAll)} color="#C41E3A" />
+      <Card title="Tax deductible" value={fmt(deductible)} color="#D35400" />
+      <Card title="This view" value={fmt(totalFil)} sub={`${fil.length} entries`} color="#1A5276" />
+    </div>
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} style={{ padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}><option value="">All months</option>{months.map(m => <option key={m} value={m}>{m}</option>)}</select>
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}><option value="">All categories</option>{EXPENSE_CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
+      </div>
+      <Btn primary onClick={openN}>+ New expense</Btn>
+    </div>
+
+    {Object.keys(catSums).length > 0 && <div style={{ marginBottom: 16 }}><ST>By category {monthFilter && `(${monthFilter})`}</ST>{Object.entries(catSums).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{cat}</span><b style={{ color: "#C41E3A" }}>{fmt(amt)}</b></div>)}</div>}
+
+    {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No expenses yet. Click "+ New expense".</p>}
+    {fil.map(e => <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+          <b>{e.description || e.category}</b>
+          <Badge text={e.category} color="#2E86C1" />
+          {e.deductible !== false && <Badge text="Deductible" color="#1B7340" />}
+        </div>
+        <div style={{ fontSize: 12, color: "#777" }}>{fmtD(e.date)} {e.vendor && `• ${e.vendor}`}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <b style={{ color: "#C41E3A", fontSize: 15 }}>{fmt(e.amount)}</b>
+        <Btn small onClick={() => openE(e)}>Edit</Btn>
+        <Btn small danger onClick={() => del(e.id)} style={delId === e.id ? { background: "#8B0000" } : {}}>{delId === e.id ? "Sure?" : "✕"}</Btn>
+      </div>
+    </div>)}
+
+    {sf && <Modal title={edit ? "Edit expense" : "New expense"} onClose={() => setSf(false)}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+        <Inp label="Category *" value={form.category} onChange={v => setForm(p => ({ ...p, category: v }))} options={EXPENSE_CATS} />
+        <Inp label="Amount *" type="number" value={form.amount} onChange={v => setForm(p => ({ ...p, amount: v }))} placeholder="25.00" />
+        <Inp label="Date" type="date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} />
+        <Inp label="Vendor/Payee" value={form.vendor} onChange={v => setForm(p => ({ ...p, vendor: v }))} placeholder="Shell, Costco, UPS..." />
+      </div>
+      <Inp label="Description" value={form.description} onChange={v => setForm(p => ({ ...p, description: v }))} placeholder="Gas for Santa Rosa delivery run" />
+      <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+        <input type="checkbox" checked={form.deductible !== false} onChange={e => setForm(p => ({ ...p, deductible: e.target.checked }))} /> Tax deductible
+      </label>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => setSf(false)}>Cancel</Btn><Btn primary onClick={save}>{edit ? "Update" : "Add expense"}</Btn></div>
+    </Modal>}
+  </div>;
 };
 
 // ===== MARKET INTELLIGENCE =====
@@ -521,9 +610,10 @@ const FieldExport = ({ visits }) => {
 
 export default function App() {
   const saved = S.load();
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], init: true };
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], expenses: [], init: true };
   if (!saved?.init) S.save(initData);
   if (!initData.visits) initData.visits = [];
+  if (!initData.expenses) initData.expenses = [];
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -531,6 +621,7 @@ export default function App() {
   const [inventory, setInventory] = useState(initData.inventory);
   const [purchases, setPurchases] = useState(initData.purchases);
   const [visits, setVisits] = useState(initData.visits);
+  const [expenses, setExpenses] = useState(initData.expenses);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const [syncStatus, setSyncStatus] = useState(cloudEnabled ? "syncing" : "off"); // off | syncing | synced | error
@@ -539,7 +630,7 @@ export default function App() {
   // Apply data from any source (cloud pull, import, etc.)
   const applyData = useCallback((data) => {
     stateRef.current = data;
-    setClients(data.clients || []); setOrders(data.orders || []); setInventory(data.inventory || []); setPurchases(data.purchases || []); setVisits(data.visits || []);
+    setClients(data.clients || []); setOrders(data.orders || []); setInventory(data.inventory || []); setPurchases(data.purchases || []); setVisits(data.visits || []); setExpenses(data.expenses || []);
   }, []);
 
   // Save to localStorage + push to cloud
@@ -594,7 +685,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v4" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v6" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `MegaPG_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -607,7 +698,7 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [] };
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], expenses: parsed.expenses || [] };
         applyData(data); S.save({ ...data, init: true });
         setTab("dashboard");
       } catch {}
@@ -618,23 +709,24 @@ export default function App() {
   const syncColors = { off: "#999", syncing: "#D35400", synced: "#1B7340", error: "#C41E3A" };
   const syncLabels = { off: "Local", syncing: "Syncing...", synced: "Synced ✓", error: "Sync error" };
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "expenses", l: `Expenses (${expenses.length})` },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v5</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v6</span>
         {cloudEnabled && <button onClick={manualSync} disabled={syncStatus === "syncing"} style={{ fontSize: 10, color: syncColors[syncStatus], background: "none", border: `1px solid ${syncColors[syncStatus]}`, borderRadius: 4, padding: "2px 8px", cursor: syncStatus === "syncing" ? "default" : "pointer" }}>{syncLabels[syncStatus]}</button>}
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); applyData(empty); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], expenses: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); applyData(empty); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
-      {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
+      {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} expenses={expenses} />}
       {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
-      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
+      {tab === "expenses" && <Expenses expenses={expenses} setExpenses={setExpenses} saveAll={sv} />}
+      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} expenses={expenses} />}
       {tab === "receipt" && <Receipt order={ro} clients={clients} />}
       {tab === "field" && <FieldDashboard visits={visits} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
