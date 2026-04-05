@@ -766,7 +766,31 @@ const FieldExport = ({ visits }) => {
     {visits.length > 0 && <div style={{ marginTop: 16 }}><ST>Preview ({visits.length} visits)</ST>{visits.slice(-5).reverse().map(v => <div key={v.id} style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}><b>{v.storeName}</b> <span style={{ color: "#999" }}>{v.zone} • {fmtD(v.date)}</span> {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? BRAND : ACCENT} />}</div>)}{visits.length > 5 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...and {visits.length - 5} more</div>}</div>}
   </div>;
 };
+// ===== LOGIN GATE =====
+const APP_PASSWORD = "dulce2026"; // CAMBIA esto por tu contraseña
 
+const LoginGate = ({ onUnlock }) => {
+  const [pwd, setPwd] = useState("");
+  const [error, setError] = useState(false);
+  const tryUnlock = () => {
+    if (pwd === APP_PASSWORD) {
+      localStorage.setItem("dulcesabor-auth", "ok");
+      onUnlock();
+    } else {
+      setError(true);
+      setPwd("");
+    }
+  };
+  return <div style={{ position: "fixed", inset: 0, background: "linear-gradient(135deg, #1B7340 0%, #0f4a28 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Arial,sans-serif", zIndex: 9999 }}>
+    <div style={{ background: "#fff", borderRadius: 12, padding: "32px 40px", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxWidth: 360, width: "90%", textAlign: "center" }}>
+      <div style={{ fontSize: 24, fontWeight: 900, color: "#1B7340", marginBottom: 4 }}>DULCE SABOR</div>
+      <div style={{ fontSize: 11, color: "#888", marginBottom: 24, letterSpacing: 1 }}>LLC • CRM</div>
+      <input type="password" value={pwd} onChange={e => { setPwd(e.target.value); setError(false); }} onKeyDown={e => e.key === "Enter" && tryUnlock()} placeholder="Contraseña" autoFocus style={{ width: "100%", padding: "12px 14px", border: `2px solid ${error ? "#C41E3A" : "#ddd"}`, borderRadius: 8, fontSize: 15, marginBottom: 12, boxSizing: "border-box", outline: "none" }} />
+      {error && <div style={{ fontSize: 12, color: "#C41E3A", marginBottom: 10 }}>Contraseña incorrecta</div>}
+      <button onClick={tryUnlock} style={{ width: "100%", padding: "12px", background: "#1B7340", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Entrar</button>
+    </div>
+  </div>;
+};
 // ===== MAIN APP =====
 export default function App() {
   const saved = S.load();
