@@ -767,7 +767,7 @@ const FieldExport = ({ visits }) => {
   </div>;
 };
 // ===== LOGIN GATE =====
-const APP_PASSWORD = "dulce2026"; // CAMBIA esto por tu contraseña
+const APP_PASSWORD = "Xn9qap8q$"; // CAMBIA esto por tu contraseña
 
 const LoginGate = ({ onUnlock }) => {
   const [pwd, setPwd] = useState("");
@@ -798,7 +798,7 @@ export default function App() {
   if (!saved?.init) S.save(initData);
   if (!initData.visits) initData.visits = [];
   if (!initData.expenses) initData.expenses = [];
-
+const [authed, setAuthed] = useState(() => localStorage.getItem("dulcesabor-auth") === "ok");
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
   const [orders, setOrders] = useState(initData.orders);
@@ -886,7 +886,7 @@ export default function App() {
 
   const syncColors = { off: "#999", syncing: ACCENT, synced: BRAND, error: "#C41E3A" };
   const syncLabels = { off: "Local", syncing: "Syncing...", synced: "Synced ✓", error: "Sync error" };
-
+if (!authed) return <LoginGate onUnlock={() => setAuthed(true)} />;
   const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "expenses", l: `Expenses (${expenses.length})` },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
