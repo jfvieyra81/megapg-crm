@@ -812,6 +812,208 @@ const Welcomes = ({ clients, orders, welcomes, setWelcomes, saveAll }) => {
   </div>;
 };
 
+const Announcements = ({ clients, templates, setTemplates, campaign, setCampaign, saveAll }) => {
+  const [step, setStep] = useState(campaign.message ? "send" : "compose");
+  const [showSave, setShowSave] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [copied, setCopied] = useState(null);
+  const [delTemplateConf, setDelTemplateConf] = useState(null);
+  const delTemplateRef = useRef(null);
+  const [resetCampConf, setResetCampConf] = useState(false);
+  const resetCampRef = useRef(false);
+
+  const tiers = campaign.tiers || ["Lista", "Bronce", "Plata", "Oro"];
+  const message = campaign.message || "";
+  const sentIds = campaign.sentIds || [];
+  const withPhoneOnly = campaign.withPhoneOnly !== false;
+
+  const updateCampaign = (patch) => {
+    const updated = { ...campaign, ...patch };
+    setCampaign(updated);
+    saveAll("campaign", updated);
+  };
+
+  const toggleTier = (tier) => {
+    const next = tiers.includes(tier) ? tiers.filter(t => t !== tier) : [...tiers, tier];
+    updateCampaign({ tiers: next });
+  };
+
+  // Filter recipients by tier and phone requirement
+  const recipients = clients.filter(c =>
+    tiers.includes(c.tier) && (!withPhoneOnly || c.phone)
+  );
+
+  const personalize = (msg, client) => {
+    if (!msg) return "";
+    return msg
+      .replace(/\{nombre\}/g, client.contact || client.name || "")
+      .replace(/\{negocio\}/g, client.name || "");
+  };
+
+  const loadTemplate = (templateId) => {
+    if (!templateId) { updateCampaign({ message: "" }); return; }
+    const t = templates.find(tt => tt.id === templateId);
+    if (t) updateCampaign({ message: t.body });
+  };
+
+  const saveTemplate = () => {
+    if (!newTemplateName.trim() || !message.trim()) return;
+    const newT = { id: uid(), name: newTemplateName.trim(), body: message, createdAt: new Date().toISOString() };
+    const updated = [...templates, newT];
+    setTemplates(updated);
+    saveAll("templates", updated);
+    setShowSave(false);
+    setNewTemplateName("");
+  };
+
+  const deleteTemplate = (templateId) => {
+    if (delTemplateRef.current === templateId) {
+      const updated = templates.filter(t => t.id !== templateId);
+      setTemplates(updated);
+      saveAll("templates", updated);
+      delTemplateRef.current = null;
+      setDelTemplateConf(null);
+    } else {
+      delTemplateRef.current = templateId;
+      setDelTemplateConf(templateId);
+      setTimeout(() => { if (delTemplateRef.current === templateId) { delTemplateRef.current = null; setDelTemplateConf(null); } }, 3000);
+    }
+  };
+
+  const prepareSend = () => {
+    if (!message.trim() || recipients.length === 0) return;
+    setStep("send");
+  };
+
+  const backToCompose = () => setStep("compose");
+
+  const resetCampaign = () => {
+    if (resetCampRef.current) {
+      const cleared = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
+      setCampaign(cleared);
+      saveAll("campaign", cleared);
+      setStep("compose");
+      resetCampRef.current = false;
+      setResetCampConf(false);
+    } else {
+      resetCampRef.current = true;
+      setResetCampConf(true);
+      setTimeout(() => { if (resetCampRef.current) { resetCampRef.current = false; setResetCampConf(false); } }, 3000);
+    }
+  };
+
+  const copyMsg = async (client) => {
+    try {
+      await navigator.clipboard.writeText(personalize(message, client));
+      setCopied(client.id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch(e) { alert("Copy falló"); }
+  };
+
+  const toggleSent = (clientId) => {
+    const next = sentIds.includes(clientId) ? sentIds.filter(id => id !== clientId) : [...sentIds, clientId];
+    updateCampaign({ sentIds: next });
+  };
+
+  // COMPOSE STEP
+  if (step === "compose") {
+    return <div>
+      <div style={{ background: "#F4ECF7", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #6C3483" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#6C3483", marginBottom: 4 }}>Anuncios masivos</div>
+        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Manda un mensaje a varios clientes a la vez. Selecciona los tiers, escribe (o carga) un mensaje, y en el siguiente paso copias y pegas uno por uno. Usa <code style={{ background: "#fff", padding: "1px 4px", borderRadius: 3 }}>{"{nombre}"}</code> para el contacto y <code style={{ background: "#fff", padding: "1px 4px", borderRadius: 3 }}>{"{negocio}"}</code> para el nombre del negocio.</div>
+      </div>
+      <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: "16px 18px", marginBottom: 14 }}>
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#555", display: "block", marginBottom: 6 }}>1. Elige tiers</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {TIERS.map(t => {
+            const active = tiers.includes(t);
+            return <button key={t} onClick={() => toggleTier(t)} style={{ padding: "6px 14px", border: `1px solid ${active ? TIER_CLR[t] : "#ddd"}`, borderRadius: 20, background: active ? TIER_CLR[t] : "#fff", color: active ? "#fff" : "#666", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{active ? "✓ " : ""}{t}</button>;
+          })}
+        </div>
+        <label style={{ fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+          <input type="checkbox" checked={withPhoneOnly} onChange={e => updateCampaign({ withPhoneOnly: e.target.checked })} />
+          Solo clientes con teléfono
+        </label>
+      </div>
+      <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: "16px 18px", marginBottom: 14 }}>
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#555", display: "block", marginBottom: 6 }}>2. Mensaje</label>
+        {templates.length > 0 && <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#777", marginBottom: 4 }}>Cargar plantilla guardada:</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {templates.map(t => <div key={t.id} style={{ display: "inline-flex", alignItems: "center", background: "#f0f0f0", borderRadius: 20, padding: "3px 4px 3px 12px", gap: 4 }}>
+              <button onClick={() => loadTemplate(t.id)} style={{ background: "none", border: "none", fontSize: 11, fontWeight: 600, cursor: "pointer", color: "#333" }}>{t.name}</button>
+              <button onClick={() => deleteTemplate(t.id)} style={{ background: delTemplateConf === t.id ? "#C41E3A" : "#ddd", color: delTemplateConf === t.id ? "#fff" : "#666", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{delTemplateConf === t.id ? "?" : "✕"}</button>
+            </div>)}
+          </div>
+        </div>}
+        <textarea value={message} onChange={e => updateCampaign({ message: e.target.value })} rows={8} placeholder="Hola {nombre}, te queremos contar que..." style={{ width: "100%", padding: "10px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+        {!showSave ? <Btn small onClick={() => setShowSave(true)} disabled={!message.trim()} style={{ marginTop: 8 }}>💾 Guardar como plantilla</Btn>
+          : <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center" }}>
+            <input value={newTemplateName} onChange={e => setNewTemplateName(e.target.value)} placeholder="Nombre de la plantilla" style={{ flex: 1, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }} autoFocus />
+            <Btn small primary onClick={saveTemplate} disabled={!newTemplateName.trim()}>Guardar</Btn>
+            <Btn small onClick={() => { setShowSave(false); setNewTemplateName(""); }}>Cancelar</Btn>
+          </div>}
+      </div>
+      <div style={{ background: "#E8F5E8", border: "1px solid #1B7340", borderRadius: 8, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 12, color: "#1B7340", fontWeight: 600 }}>📨 Se enviará a</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: "#1B7340" }}>{recipients.length} cliente{recipients.length !== 1 ? "s" : ""}</div>
+        </div>
+        <Btn primary onClick={prepareSend} disabled={!message.trim() || recipients.length === 0}>Preparar envíos →</Btn>
+      </div>
+    </div>;
+  }
+
+  // SEND STEP
+  const sentCount = sentIds.length;
+  const pct = recipients.length > 0 ? Math.round(sentCount / recipients.length * 100) : 0;
+  return <div>
+    <div style={{ background: "#F4ECF7", borderRadius: 8, padding: "12px 16px", marginBottom: 14, borderLeft: "4px solid #6C3483" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#6C3483", marginBottom: 4 }}>Enviando anuncio a {recipients.length} cliente{recipients.length !== 1 ? "s" : ""}</div>
+          <div style={{ fontSize: 12, color: "#555" }}>Copia el mensaje de cada cliente, pégalo en WhatsApp, y marca como enviado. Tu progreso se guarda aunque cierres la ventana.</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <Btn small onClick={backToCompose}>← Volver a editar</Btn>
+          <Btn small danger onClick={resetCampaign} style={resetCampConf ? { background: "#8B0000" } : {}}>{resetCampConf ? "Sure?" : "Nueva campaña"}</Btn>
+        </div>
+      </div>
+    </div>
+    <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 6 }}>
+        <b>Progreso</b>
+        <span>{sentCount} de {recipients.length} enviados ({pct}%)</span>
+      </div>
+      <div style={{ height: 8, background: "#f0f0f0", borderRadius: 4, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: "#1B7340", transition: "width 0.3s" }} />
+      </div>
+    </div>
+    {recipients.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>Ningún cliente coincide con los filtros. Regresa y ajusta los tiers.</div>}
+    {recipients.map(c => {
+      const personalized = personalize(message, c);
+      const isSent = sentIds.includes(c.id);
+      return <div key={c.id} style={{ background: isSent ? "#F8F8F8" : "#fff", border: "1px solid #eee", borderLeft: `4px solid ${isSent ? "#1B7340" : "#6C3483"}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10, opacity: isSent ? 0.65 : 1 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>
+              {c.name} <Badge text={c.tier} color={TIER_CLR[c.tier]} />
+              {isSent && <Badge text="✓ Enviado" color="#1B7340" />}
+            </div>
+            <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{c.contact || "—"} • {c.phone || "sin teléfono"} • {c.zone || "—"}</div>
+          </div>
+        </div>
+        <div style={{ background: "#f8f8f8", padding: "8px 10px", borderRadius: 6, fontSize: 12, whiteSpace: "pre-wrap", fontFamily: "inherit", color: "#333", marginBottom: 8 }}>{personalized}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <Btn small primary onClick={() => copyMsg(c)}>{copied === c.id ? "✓ Copiado" : "Copiar"}</Btn>
+          {c.phone && <WaBtn phone={c.phone} msg={personalized} label="WhatsApp" small />}
+          <Btn small onClick={() => toggleSent(c.id)} style={{ background: isSent ? "#888" : "#1B7340", color: "#fff" }}>{isSent ? "Desmarcar" : "Marcar enviado"}</Btn>
+        </div>
+      </div>;
+    })}
+  </div>;
+};
+
 const normPhone = (p) => { if (!p) return ""; const d = p.replace(/\D/g, ""); return d.length === 10 ? "1" + d : d; };
 
 const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
@@ -1024,7 +1226,8 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
 
 export default function App() {
   const saved = S.load();
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, init: true };
+  const defaultCampaign = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, init: true };
   if (!saved?.init) S.save(initData);
   // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
@@ -1034,6 +1237,10 @@ export default function App() {
   if (!initData.followups) initData.followups = {};
   // Migrate: add welcomes if missing from old save
   if (!initData.welcomes) initData.welcomes = {};
+  // Migrate: add templates if missing from old save
+  if (!initData.templates) initData.templates = [];
+  // Migrate: add campaign if missing from old save
+  if (!initData.campaign) initData.campaign = defaultCampaign;
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -1044,6 +1251,8 @@ export default function App() {
   const [reminders, setReminders] = useState(initData.reminders);
   const [followups, setFollowups] = useState(initData.followups);
   const [welcomes, setWelcomes] = useState(initData.welcomes);
+  const [templates, setTemplates] = useState(initData.templates);
+  const [campaign, setCampaign] = useState(initData.campaign);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
@@ -1059,7 +1268,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.7" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.8" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1072,9 +1281,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {} };
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {}, templates: parsed.templates || [], campaign: parsed.campaign || defaultCampaign };
         stateRef.current = data; S.save({ ...data, init: true });
-        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes);
+        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes); setTemplates(data.templates); setCampaign(data.campaign);
         setTab("dashboard");
       } catch {}
     };
@@ -1132,16 +1341,16 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.7</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.8</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {} }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
@@ -1150,6 +1359,7 @@ export default function App() {
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
       {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} />}
+      {tab === "anuncios" && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
