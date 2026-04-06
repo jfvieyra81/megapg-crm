@@ -49,6 +49,7 @@ const FOLLOWUP_DAYS = 21;
 const REMINDER_COOLDOWN_DAYS = 7;
 const DEFAULT_REORDER_CYCLE = 30;
 const URGENT_OVERDUE_DAYS = 7;
+const ANTICIPATION_DAYS = 5;
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -519,7 +520,7 @@ const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
     const lastO = co[0];
     const daysSince = dSince(lastO.date);
     const cycle = calcClientCycle(co);
-    const overdue = daysSince - cycle;
+    const overdue = daysSince - cycle; // positive = vencido, negative = próximo
     const lastReminder = reminders[c.id]?.lastSent;
     const dsReminder = lastReminder ? dSince(lastReminder) : 999;
     const inCooldown = dsReminder < REMINDER_COOLDOWN_DAYS;
@@ -527,16 +528,26 @@ const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
     co.forEach(o => o.items.forEach(it => { prodCount[it.productId] = (prodCount[it.productId] || 0) + it.qty; }));
     const topProds = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([pid]) => pF(pid)?.name).filter(Boolean);
     return { c, lastO, daysSince, cycle, overdue, inCooldown, dsReminder, topProds, orderCount: co.length };
-  }).filter(r => r && r.overdue >= 0).sort((a, b) => b.overdue - a.overdue);
+  }).filter(Boolean);
 
-  const pending = rows.filter(r => !r.inCooldown);
-  const cooldown = rows.filter(r => r.inCooldown);
+  // Vencidos: ya pasó el ciclo. Próximos: faltan 1..ANTICIPATION_DAYS para el ciclo.
+  const vencidos = rows.filter(r => r.overdue >= 0 && !r.inCooldown).sort((a, b) => b.overdue - a.overdue);
+  const proximos = rows.filter(r => r.overdue < 0 && r.overdue >= -ANTICIPATION_DAYS && !r.inCooldown).sort((a, b) => b.overdue - a.overdue);
+  const cooldown = rows.filter(r => r.inCooldown && (r.overdue >= -ANTICIPATION_DAYS));
 
-  const defaultMsg = (r) => {
+  // Mensaje tono RECUPERACIÓN (vencidos)
+  const msgVencido = (r) => {
     const prodText = r.topProds.length > 0 ? r.topProds.join(" y ") : "Slaps Lollipops";
-    return `Hola ${r.c.contact || r.c.name},\n\nSoy José de Mega PG Distributions. Han pasado ${r.daysSince} días desde tu último pedido (${fmtD(r.lastO.date)} por ${fmt(r.lastO.total)}) — quería saber cómo vas de inventario.\n\nTenemos stock fresco de ${prodText} listo para entrega en tu zona.\n\n¿Te armo un pedido esta semana?\n\nGracias,\nJosé — (707) 360-7420`;
+    return `Hola ${r.c.contact || r.c.name},\n\nSoy José de Mega PG Distributions. Noté que han pasado ${r.daysSince} días desde tu último pedido (${fmtD(r.lastO.date)} por ${fmt(r.lastO.total)}) y quería saber cómo estás.\n\n¿Todo bien con el inventario? Tenemos stock fresco de ${prodText} listo para entrega en tu zona.\n\nSi quieres te armo un pedido y lo entrego esta semana.\n\nGracias,\nJosé — (707) 360-7420`;
   };
 
+  // Mensaje tono PROACTIVO (próximos)
+  const msgProximo = (r) => {
+    const prodText = r.topProds.length > 0 ? r.topProds.join(" y ") : "Slaps Lollipops";
+    return `Hola ${r.c.contact || r.c.name},\n\nSoy José de Mega PG. Pasando a saludar y ver cómo vas de inventario de ${prodText} — por lo general reordenas cada ${r.cycle} días más o menos.\n\nTenemos stock fresco listo. Si quieres te armo el pedido ahora y lo entrego esta semana para que no te quedes corto.\n\nAvísame,\nJosé — (707) 360-7420`;
+  };
+
+  const defaultMsg = (r) => r.overdue >= 0 ? msgVencido(r) : msgProximo(r);
   const getMsg = (r) => edits[r.c.id] ?? defaultMsg(r);
 
   const copyMsg = async (r) => {
@@ -560,39 +571,55 @@ const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
 
   const urgColor = (overdue) => overdue >= URGENT_OVERDUE_DAYS ? "#C41E3A" : "#D35400";
 
+  // Render as function (not component) to avoid remount on every keystroke that would kill textarea focus
+  const renderRow = (r, kind) => {
+    const msg = getMsg(r);
+    const borderColor = kind === "vencido" ? urgColor(r.overdue) : "#F39C12";
+    const badgeText = kind === "vencido" ? `${r.overdue}d vencido` : `en ${Math.abs(r.overdue)}d`;
+    const badgeColor = kind === "vencido" ? urgColor(r.overdue) : "#F39C12";
+    return <div key={r.c.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${borderColor}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.c.name} <Badge text={r.c.tier} color={TIER_CLR[r.c.tier]} /></div>
+          <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.c.contact || "—"} • {r.c.phone || "sin teléfono"} • {r.c.zone || "—"}</div>
+          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Último pedido: <b>{fmtD(r.lastO.date)}</b> ({fmt(r.lastO.total)}) • Ciclo: <b>{r.cycle}d</b> • {r.orderCount} pedido{r.orderCount !== 1 ? "s" : ""} total</div>
+        </div>
+        <Badge text={badgeText} color={badgeColor} />
+      </div>
+      <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.c.id]: e.target.value }))} rows={6} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+        <Btn small primary onClick={() => copyMsg(r)}>{copied === r.c.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
+        {r.c.phone && <WaBtn phone={r.c.phone} msg={msg} label="Abrir WhatsApp" small />}
+        <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
+        {edits[r.c.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.c.id]; return n; })}>Reset texto</Btn>}
+      </div>
+    </div>;
+  };
+
+  const urgentCount = vencidos.filter(r => r.overdue >= URGENT_OVERDUE_DAYS).length;
+
   return <div>
     <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 4 }}>Recordatorios de reorden</div>
-      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Clientes con pedidos vencidos según su ciclo promedio de reorden. Edita el mensaje si quieres, cópialo, pégalo en WhatsApp, y marca "Enviado" para evitar repetir en {REMINDER_COOLDOWN_DAYS} días. Clientes con 1 solo pedido se recuerdan a los {DEFAULT_REORDER_CYCLE} días.</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Vencidos: clientes que ya pasaron su ciclo de reorden. Próximos: clientes que llegarán a su ciclo en los próximos {ANTICIPATION_DAYS} días (contáctalos antes de que se queden sin producto). Cooldown de {REMINDER_COOLDOWN_DAYS} días tras "Marcar enviado". Clientes con 1 solo pedido usan ciclo default de {DEFAULT_REORDER_CYCLE} días.</div>
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
-      <Card title="Pendientes" value={pending.length} color="#D35400" />
-      <Card title={`Urgentes (${URGENT_OVERDUE_DAYS}+ días)`} value={pending.filter(r => r.overdue >= URGENT_OVERDUE_DAYS).length} color="#C41E3A" />
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+      <Card title="Vencidos" value={vencidos.length} color="#C41E3A" />
+      <Card title={`Próximos (${ANTICIPATION_DAYS}d)`} value={proximos.length} color="#F39C12" />
+      <Card title={`Urgentes (${URGENT_OVERDUE_DAYS}+ días)`} value={urgentCount} color="#8B0000" />
       <Card title="En cooldown" value={cooldown.length} color="#888" />
     </div>
-    {pending.length === 0 && cooldown.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay clientes con pedidos vencidos. 🎉</div>}
-    {pending.map(r => {
-      const msg = getMsg(r);
-      return <div key={r.c.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${urgColor(r.overdue)}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.c.name} <Badge text={r.c.tier} color={TIER_CLR[r.c.tier]} /></div>
-            <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.c.contact || "—"} • {r.c.phone || "sin teléfono"} • {r.c.zone || "—"}</div>
-            <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Último pedido: <b>{fmtD(r.lastO.date)}</b> ({fmt(r.lastO.total)}) • Ciclo: <b>{r.cycle}d</b> • {r.orderCount} pedido{r.orderCount !== 1 ? "s" : ""} total</div>
-          </div>
-          <Badge text={`${r.overdue}d vencido`} color={urgColor(r.overdue)} />
-        </div>
-        <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.c.id]: e.target.value }))} rows={6} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
-        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-          <Btn small primary onClick={() => copyMsg(r)}>{copied === r.c.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
-          {r.c.phone && <WaBtn phone={r.c.phone} msg={msg} label="Abrir WhatsApp" small />}
-          <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
-          {edits[r.c.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.c.id]; return n; })}>Reset texto</Btn>}
-        </div>
-      </div>;
-    })}
+    {vencidos.length === 0 && proximos.length === 0 && cooldown.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay recordatorios pendientes. 🎉</div>}
+    {vencidos.length > 0 && <>
+      <ST>🔴 Vencidos ({vencidos.length}) — tono recuperación</ST>
+      {vencidos.map(r => renderRow(r, "vencido"))}
+    </>}
+    {proximos.length > 0 && <>
+      <ST>🟡 Próximos a reordenar ({proximos.length}) — tono proactivo</ST>
+      {proximos.map(r => renderRow(r, "proximo"))}
+    </>}
     {cooldown.length > 0 && <>
-      <ST>En cooldown ({cooldown.length})</ST>
+      <ST>⏸ En cooldown ({cooldown.length})</ST>
       {cooldown.map(r => <div key={r.c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 12px", background: "#f8f8f8", borderRadius: 6, marginBottom: 4, fontSize: 12 }}>
         <div><b>{r.c.name}</b> <span style={{ color: "#999" }}>— enviado hace {r.dsReminder}d, reaparece en {REMINDER_COOLDOWN_DAYS - r.dsReminder}d</span></div>
         <Btn small onClick={() => resetCooldown(r.c.id)} style={{ fontSize: 10 }}>Reset</Btn>
@@ -632,7 +659,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.1" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `MegaPG_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -654,7 +681,7 @@ export default function App() {
     reader.readAsText(file); e.target.value = "";
   };
 
-  // Count pending reorder reminders for tab badge
+  // Count pending reorder reminders for tab badge (vencidos + próximos, excluding cooldown)
   const reorderPending = clients.reduce((n, c) => {
     const co = orders.filter(o => o.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
     if (co.length === 0) return n;
@@ -662,13 +689,13 @@ export default function App() {
     const overdue = dSince(co[0].date) - cycle;
     const lastR = reminders[c.id]?.lastSent;
     const inCool = lastR && dSince(lastR) < REMINDER_COOLDOWN_DAYS;
-    return (overdue >= 0 && !inCool) ? n + 1 : n;
+    return (overdue >= -ANTICIPATION_DAYS && !inCool) ? n + 1 : n;
   }, 0);
 
   const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v5</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v5.1</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
