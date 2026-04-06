@@ -1268,7 +1268,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.8" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.9" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1341,12 +1341,116 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // DAILY DIGEST: runs once on first load of each calendar day
+  const digestSentRef = useRef(false);
+  useEffect(() => {
+    if (!cloudEnabled || digestSentRef.current) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const lastDigest = localStorage.getItem("ds-last-digest");
+    if (lastDigest === today) { digestSentRef.current = true; return; }
+
+    const timer = setTimeout(async () => {
+      if (digestSentRef.current) return;
+      digestSentRef.current = true;
+
+      // Fetch current web_orders pending count (async, fresh)
+      let webPending = 0;
+      try {
+        const resp = await fetch(`${SUPA_URL}/rest/v1/web_orders?status=eq.pending&select=id`, {
+          headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` }
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          webPending = Array.isArray(data) ? data.length : 0;
+        }
+      } catch(e) { console.error("Digest web_orders fetch failed:", e); }
+
+      // Compute reorder counts (split vencidos vs proximos)
+      let vencidos = 0, proximos = 0;
+      clients.forEach(c => {
+        const co = orders.filter(o => o.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
+        if (co.length === 0) return;
+        const cycle = calcClientCycle(co);
+        const overdue = dSince(co[0].date) - cycle;
+        const lastR = reminders[c.id]?.lastSent;
+        const inCool = lastR && dSince(lastR) < REMINDER_COOLDOWN_DAYS;
+        if (inCool) return;
+        if (overdue >= 0) vencidos++;
+        else if (overdue >= -ANTICIPATION_DAYS) proximos++;
+      });
+
+      // Compute welcomes pending
+      const welcomesPend = clients.reduce((n, c) => {
+        if (welcomes[c.id]) return n;
+        const co = orders.filter(o => o.clientId === c.id);
+        if (co.length === 0) return n;
+        const earliest = co.reduce((min, o) => new Date(o.date) < new Date(min.date) ? o : min, co[0]);
+        return dSince(earliest.date) <= WELCOME_MAX_DAYS ? n + 1 : n;
+      }, 0);
+
+      // Compute post-delivery pending
+      const postdelPend = orders.reduce((n, o) => {
+        if (o.status !== "delivered" && o.status !== "paid") return n;
+        if (followups[o.id]) return n;
+        const ds = dSince(o.date);
+        if (ds < POSTDEL_MIN_DAYS || ds > POSTDEL_MAX_DAYS) return n;
+        return clients.some(c => c.id === o.clientId) ? n + 1 : n;
+      }, 0);
+
+      // Compute inventory counts
+      const lowStockCount = inventory.filter(i => i.stock > 0 && i.stock <= LOW).length;
+      const outStockCount = inventory.filter(i => i.stock === 0).length;
+
+      const total = webPending + vencidos + proximos + welcomesPend + postdelPend + lowStockCount + outStockCount;
+
+      // Skip if nothing pending (still mark as sent to avoid re-check)
+      if (total === 0) {
+        localStorage.setItem("ds-last-digest", today);
+        return;
+      }
+
+      // Build digest body
+      const dateStr = new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+      const lines = [`¡Buenos días José! ☀️`, ``, `Aquí está tu resumen del ${dateStr}:`, ``];
+      if (webPending > 0) lines.push(`📬 Pedidos web pendientes por importar: ${webPending}`);
+      if (vencidos > 0) lines.push(`⏰ Recordatorios vencidos: ${vencidos}`);
+      if (proximos > 0) lines.push(`🟡 Recordatorios próximos: ${proximos}`);
+      if (welcomesPend > 0) lines.push(`👋 Clientes nuevos sin bienvenida: ${welcomesPend}`);
+      if (postdelPend > 0) lines.push(`📊 Seguimientos post-entrega: ${postdelPend}`);
+      if (lowStockCount > 0) lines.push(`📉 Productos con inventario bajo: ${lowStockCount}`);
+      if (outStockCount > 0) lines.push(`❌ Productos agotados: ${outStockCount}`);
+      lines.push(``, `TOTAL: ${total} alerta${total !== 1 ? "s" : ""}`, ``, `Abrir CRM: ${window.location.origin}`, ``, `Que tengas un excelente día. 📚`);
+
+      // Insert into daily_digests table — Supabase trigger will send the email
+      try {
+        const resp = await fetch(`${SUPA_URL}/rest/v1/daily_digests`, {
+          method: 'POST',
+          headers: SUPA_HEADERS,
+          body: JSON.stringify({ body: lines.join('\n'), digest_date: today })
+        });
+        if (resp.ok) {
+          localStorage.setItem("ds-last-digest", today);
+          console.log("Daily digest sent");
+        } else {
+          console.error("Digest insert failed:", resp.status);
+          digestSentRef.current = false; // Allow retry on next mount
+        }
+      } catch(e) {
+        console.error("Digest send failed:", e);
+        digestSentRef.current = false;
+      }
+    }, 5000); // 5s delay to let all state settle
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.8</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.9</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
