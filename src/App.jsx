@@ -56,6 +56,10 @@ const REMINDER_COOLDOWN_DAYS = 7;
 const DEFAULT_REORDER_CYCLE = 30;
 const URGENT_OVERDUE_DAYS = 7;
 const ANTICIPATION_DAYS = 5;
+// POST-DELIVERY FOLLOW-UP SETTINGS
+const POSTDEL_MIN_DAYS = 3;    // Earliest: give client time to actually sell product
+const POSTDEL_MAX_DAYS = 21;   // Latest: after this, reorder reminder takes over
+const POSTDEL_URGENT_DAYS = 14; // "Last chance" threshold
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -635,6 +639,98 @@ const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
 };
 
 // Phone normalization (keep digits only, prefix '1' for US 10-digit)
+const PostDelivery = ({ clients, orders, followups, setFollowups, saveAll }) => {
+  const [edits, setEdits] = useState({});
+  const [copied, setCopied] = useState(null);
+
+  // Build rows from delivered/paid orders within the follow-up window, excluding already-followed-up
+  const rows = orders
+    .filter(o => (o.status === "delivered" || o.status === "paid") && !followups[o.id])
+    .map(o => {
+      const daysSince = dSince(o.date);
+      if (daysSince < POSTDEL_MIN_DAYS || daysSince > POSTDEL_MAX_DAYS) return null;
+      const client = clients.find(c => c.id === o.clientId);
+      if (!client) return null;
+      // Find top product in this specific order (by qty)
+      const topItem = [...(o.items || [])].sort((a, b) => b.qty - a.qty)[0];
+      const topProd = topItem ? pF(topItem.productId)?.name : null;
+      const totalCases = (o.items || []).reduce((s, it) => s + Number(it.qty || 0), 0);
+      return { order: o, client, daysSince, topProd, totalCases };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.daysSince - a.daysSince); // Most urgent (oldest delivery) first
+
+  const ready = rows.filter(r => r.daysSince < POSTDEL_URGENT_DAYS);
+  const urgent = rows.filter(r => r.daysSince >= POSTDEL_URGENT_DAYS);
+
+  const defaultMsg = (r) => {
+    const prodText = r.topProd || "tu pedido";
+    return `Hola ${r.client.contact || r.client.name},\n\nSoy José de Dulce Sabor. Pasé a saludar y ver cómo te va con el pedido del ${fmtD(r.order.date)} — ${prodText}.\n\n¿Cómo está saliendo? ¿La gente lo está aceptando bien? Me interesa saber qué tal va para poder ayudarte mejor.\n\nSi necesitas reorden, quieres probar algún producto nuevo, o tienes cualquier duda, avísame. También puedes ordenar en línea: https://dulcesaborca.com\n\nGracias por la confianza,\nJosé — (707) 360-7420`;
+  };
+
+  const getMsg = (r) => edits[r.order.id] ?? defaultMsg(r);
+
+  const copyMsg = async (r) => {
+    try {
+      await navigator.clipboard.writeText(getMsg(r));
+      setCopied(r.order.id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch(e) { alert("Copy falló — selecciona el texto manualmente"); }
+  };
+
+  const markSent = (r) => {
+    const updated = { ...followups, [r.order.id]: { sentAt: new Date().toISOString(), clientId: r.client.id } };
+    setFollowups(updated);
+    saveAll("followups", updated);
+  };
+
+  const renderRow = (r) => {
+    const msg = getMsg(r);
+    const isUrgent = r.daysSince >= POSTDEL_URGENT_DAYS;
+    const borderColor = isUrgent ? "#C41E3A" : "#1A5276";
+    const badgeText = `Entregado hace ${r.daysSince}d`;
+    const badgeColor = isUrgent ? "#C41E3A" : "#1A5276";
+    return <div key={r.order.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${borderColor}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.client.name} <Badge text={r.client.tier} color={TIER_CLR[r.client.tier]} /></div>
+          <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.client.contact || "—"} • {r.client.phone || "sin teléfono"} • {r.client.zone || "—"}</div>
+          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Pedido #{r.order.id.slice(-6).toUpperCase()} • <b>{fmtD(r.order.date)}</b> • {fmt(r.order.total)} • {r.totalCases} caja{r.totalCases !== 1 ? "s" : ""} • Estado: <b>{r.order.status}</b></div>
+        </div>
+        <Badge text={badgeText} color={badgeColor} />
+      </div>
+      <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.order.id]: e.target.value }))} rows={7} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+        <Btn small primary onClick={() => copyMsg(r)}>{copied === r.order.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
+        {r.client.phone && <WaBtn phone={r.client.phone} msg={msg} label="Abrir WhatsApp" small />}
+        <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
+        {edits[r.order.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.order.id]; return n; })}>Reset texto</Btn>}
+      </div>
+    </div>;
+  };
+
+  return <div>
+    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 4 }}>Seguimiento post-entrega</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Pedidos entregados hace entre {POSTDEL_MIN_DAYS} y {POSTDEL_MAX_DAYS} días que aún no tienen seguimiento. El objetivo es saber cómo va la venta del producto en la tienda. Una vez marcado como enviado, el pedido no vuelve a aparecer aquí. Después de {POSTDEL_MAX_DAYS} días, el módulo de recordatorios de reorden toma el relevo.</div>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+      <Card title="Listos para seguir" value={ready.length} color="#1A5276" />
+      <Card title={`Última oportunidad (${POSTDEL_URGENT_DAYS}+d)`} value={urgent.length} color="#C41E3A" />
+      <Card title="Total pendientes" value={rows.length} color="#6C3483" />
+    </div>
+    {rows.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay pedidos pendientes de seguimiento. 🎉</div>}
+    {urgent.length > 0 && <>
+      <ST>🔴 Última oportunidad ({urgent.length})</ST>
+      {urgent.map(r => renderRow(r))}
+    </>}
+    {ready.length > 0 && <>
+      <ST>🔵 Listos para seguimiento ({ready.length})</ST>
+      {ready.map(r => renderRow(r))}
+    </>}
+  </div>;
+};
+
 const normPhone = (p) => { if (!p) return ""; const d = p.replace(/\D/g, ""); return d.length === 10 ? "1" + d : d; };
 
 const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
@@ -847,12 +943,14 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
 
 export default function App() {
   const saved = S.load();
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, init: true };
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, init: true };
   if (!saved?.init) S.save(initData);
   // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
   // Migrate: add reminders if missing from old save
   if (!initData.reminders) initData.reminders = {};
+  // Migrate: add followups if missing from old save
+  if (!initData.followups) initData.followups = {};
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -861,6 +959,7 @@ export default function App() {
   const [purchases, setPurchases] = useState(initData.purchases);
   const [visits, setVisits] = useState(initData.visits);
   const [reminders, setReminders] = useState(initData.reminders);
+  const [followups, setFollowups] = useState(initData.followups);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
@@ -876,7 +975,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.5" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.6" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -889,9 +988,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {} };
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {} };
         stateRef.current = data; S.save({ ...data, init: true });
-        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders);
+        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups);
         setTab("dashboard");
       } catch {}
     };
@@ -907,6 +1006,16 @@ export default function App() {
     const lastR = reminders[c.id]?.lastSent;
     const inCool = lastR && dSince(lastR) < REMINDER_COOLDOWN_DAYS;
     return (overdue >= -ANTICIPATION_DAYS && !inCool) ? n + 1 : n;
+  }, 0);
+
+  // Count pending post-delivery follow-ups for tab badge
+  const postdelPending = orders.reduce((n, o) => {
+    if (o.status !== "delivered" && o.status !== "paid") return n;
+    if (followups[o.id]) return n;
+    const ds = dSince(o.date);
+    if (ds < POSTDEL_MIN_DAYS || ds > POSTDEL_MAX_DAYS) return n;
+    const clientExists = clients.some(c => c.id === o.clientId);
+    return clientExists ? n + 1 : n;
   }, 0);
 
   // Fetch pending web orders count for tab badge
@@ -929,22 +1038,23 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.5</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.6</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {} }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {} }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
       {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
+      {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
