@@ -60,6 +60,8 @@ const ANTICIPATION_DAYS = 5;
 const POSTDEL_MIN_DAYS = 3;    // Earliest: give client time to actually sell product
 const POSTDEL_MAX_DAYS = 21;   // Latest: after this, reorder reminder takes over
 const POSTDEL_URGENT_DAYS = 14; // "Last chance" threshold
+// WELCOME NEW CLIENT SETTINGS
+const WELCOME_MAX_DAYS = 14;   // Window after first order to send welcome
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -731,6 +733,85 @@ const PostDelivery = ({ clients, orders, followups, setFollowups, saveAll }) => 
   </div>;
 };
 
+const Welcomes = ({ clients, orders, welcomes, setWelcomes, saveAll }) => {
+  const [edits, setEdits] = useState({});
+  const [copied, setCopied] = useState(null);
+
+  // Find clients whose first (and only so far, OR whose earliest) order was recent and who haven't been welcomed
+  const rows = clients
+    .filter(c => !welcomes[c.id])
+    .map(c => {
+      const co = orders.filter(o => o.clientId === c.id);
+      if (co.length === 0) return null; // No orders yet → no welcome (they haven't "committed")
+      // Sort ascending to find earliest order
+      const sorted = [...co].sort((a, b) => new Date(a.date) - new Date(b.date));
+      const firstO = sorted[0];
+      const daysSinceFirst = dSince(firstO.date);
+      if (daysSinceFirst > WELCOME_MAX_DAYS) return null; // Too late, the moment passed
+      // Find top product in that first order
+      const topItem = [...(firstO.items || [])].sort((a, b) => b.qty - a.qty)[0];
+      const topProd = topItem ? pF(topItem.productId)?.name : null;
+      return { client: c, firstO, daysSinceFirst, topProd };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.daysSinceFirst - b.daysSinceFirst); // Freshest first (most recently acquired clients on top)
+
+  const defaultMsg = (r) => {
+    const name = r.client.contact || r.client.name;
+    return `¡Hola ${name}!\n\nSoy José de Dulce Sabor y te quiero dar la bienvenida como nuevo cliente. ¡Gracias por tu confianza!\n\nAquí va toda la información que necesitas:\n\n📦 Productos: Dulces mexicanos auténticos con entrega directa en tu zona\n💰 Formas de pago: Efectivo, Zelle (megapg.norcal@gmail.com), Venmo (@MegaPG-NorCal) o cheque a nombre de Dulce Sabor LLC\n🌐 Ordena en línea cuando necesites: https://dulcesaborca.com\n📞 Cualquier duda o pedido: (707) 360-7420\n\nEstoy a tus órdenes. Mi meta es que tus ventas crezcan — si hay algo que puedo hacer mejor, avísame con confianza.\n\n¡Gracias y bienvenid@ a la familia Dulce Sabor!\nJosé Flores`;
+  };
+
+  const getMsg = (r) => edits[r.client.id] ?? defaultMsg(r);
+
+  const copyMsg = async (r) => {
+    try {
+      await navigator.clipboard.writeText(getMsg(r));
+      setCopied(r.client.id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch(e) { alert("Copy falló — selecciona el texto manualmente"); }
+  };
+
+  const markSent = (r) => {
+    const updated = { ...welcomes, [r.client.id]: { sentAt: new Date().toISOString() } };
+    setWelcomes(updated);
+    saveAll("welcomes", updated);
+  };
+
+  const renderRow = (r) => {
+    const msg = getMsg(r);
+    return <div key={r.client.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: "4px solid #1B7340", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.client.name} <Badge text={r.client.tier} color={TIER_CLR[r.client.tier]} /> <Badge text="NUEVO" color="#1B7340" /></div>
+          <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.client.contact || "—"} • {r.client.phone || "sin teléfono"} • {r.client.zone || "—"}</div>
+          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Primer pedido: <b>{fmtD(r.firstO.date)}</b> ({fmt(r.firstO.total)}){r.topProd ? ` • ${r.topProd}` : ""}</div>
+        </div>
+        <Badge text={r.daysSinceFirst === 0 ? "Hoy" : `Hace ${r.daysSinceFirst}d`} color="#1B7340" />
+      </div>
+      <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.client.id]: e.target.value }))} rows={10} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+        <Btn small primary onClick={() => copyMsg(r)}>{copied === r.client.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
+        {r.client.phone && <WaBtn phone={r.client.phone} msg={msg} label="Abrir WhatsApp" small />}
+        <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
+        {edits[r.client.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.client.id]; return n; })}>Reset texto</Btn>}
+      </div>
+    </div>;
+  };
+
+  return <div>
+    <div style={{ background: "#E8F5E8", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1B7340" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#1B7340", marginBottom: 4 }}>Bienvenida a nuevos clientes</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Clientes que hicieron su primer pedido en los últimos {WELCOME_MAX_DAYS} días y aún no han recibido mensaje de bienvenida. Un cliente solo aparece aquí una vez — después de "Marcar enviado", sale para siempre.</div>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 16 }}>
+      <Card title="Nuevos clientes" value={rows.length} color="#1B7340" />
+      <Card title="Ya bienvenidos" value={Object.keys(welcomes).length} color="#888" />
+    </div>
+    {rows.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay clientes nuevos pendientes de bienvenida. 🎉</div>}
+    {rows.map(r => renderRow(r))}
+  </div>;
+};
+
 const normPhone = (p) => { if (!p) return ""; const d = p.replace(/\D/g, ""); return d.length === 10 ? "1" + d : d; };
 
 const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
@@ -943,7 +1024,7 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
 
 export default function App() {
   const saved = S.load();
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, init: true };
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, init: true };
   if (!saved?.init) S.save(initData);
   // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
@@ -951,6 +1032,8 @@ export default function App() {
   if (!initData.reminders) initData.reminders = {};
   // Migrate: add followups if missing from old save
   if (!initData.followups) initData.followups = {};
+  // Migrate: add welcomes if missing from old save
+  if (!initData.welcomes) initData.welcomes = {};
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -960,6 +1043,7 @@ export default function App() {
   const [visits, setVisits] = useState(initData.visits);
   const [reminders, setReminders] = useState(initData.reminders);
   const [followups, setFollowups] = useState(initData.followups);
+  const [welcomes, setWelcomes] = useState(initData.welcomes);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
@@ -975,7 +1059,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.6" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.7" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -988,9 +1072,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {} };
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {} };
         stateRef.current = data; S.save({ ...data, init: true });
-        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups);
+        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes);
         setTab("dashboard");
       } catch {}
     };
@@ -1018,6 +1102,16 @@ export default function App() {
     return clientExists ? n + 1 : n;
   }, 0);
 
+  // Count pending welcome messages for tab badge
+  const welcomesPending = clients.reduce((n, c) => {
+    if (welcomes[c.id]) return n;
+    const co = orders.filter(o => o.clientId === c.id);
+    if (co.length === 0) return n;
+    const earliest = co.reduce((min, o) => new Date(o.date) < new Date(min.date) ? o : min, co[0]);
+    const ds = dSince(earliest.date);
+    return ds <= WELCOME_MAX_DAYS ? n + 1 : n;
+  }, 0);
+
   // Fetch pending web orders count for tab badge
   const [webPendingCount, setWebPendingCount] = useState(0);
   useEffect(() => {
@@ -1038,16 +1132,16 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.6</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.7</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {} }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {} }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
@@ -1055,6 +1149,7 @@ export default function App() {
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
+      {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} />}
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
