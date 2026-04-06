@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { jsPDF } from "jspdf";
-import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 const PRODUCTS = [
   // SLAPS LOLLIPOPS
@@ -36,7 +35,7 @@ const PRODUCTS = [
 const ZONES = ["Santa Rosa / Sonoma", "Sacramento", "San Jose / Bay Area", "Mendocino / Ukiah", "Oakland / Bay Area", "Other"];
 const TIERS = ["Lista", "Bronce", "Plata", "Oro"];
 const BRANDS = ["Mega PG", "Pigüi USA", "Both", "Neither/Unknown"];
-const STORE_TYPES = ["Dulcería", "Carnicería", "Supermercado", "Tienda/Market", "Convenience", "Lonchera/Food Truck", "Taquería/Restaurante", "Frutería/Paletería", "Peluquería/Barbershop", "Lavandería", "Envíos/Celulares", "Piñatería", "Flea Market/Swap Meet", "Evento", "Other"];
+const STORE_TYPES = ["Dulcería", "Carnicería", "Supermercado", "Tienda/Market", "Convenience", "Other"];
 const INTEREST_LVL = ["Very interested", "Somewhat interested", "Not interested", "Already a client"];
 const SUPPLIERS = ["Pigüi USA (LA)", "Local distributor", "Travels to buy", "Online/Walmart/Amazon", "Unknown", "None (no Slaps)"];
 const PRODUCTS_SEEN = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/Cachetadas", "Cache Colors", "Slim Licks", "Bibi Licks", "Piguileta", "Mega Huevón", "Flamkiyos", "Mordidilla", "Don Cuco", "Other Pigüi", "None"];
@@ -46,96 +45,24 @@ const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
 const LOW = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
 const FOLLOWUP_DAYS = 21;
-const EXPENSE_CATS = ["Gas/Mileage", "Samples", "Phone/Internet", "Packaging/Supplies", "Vehicle maintenance", "Insurance", "Meals (business)", "Marketing/Printing", "Shipping (UPS/USPS)", "Storage/Rent", "Bank/Payment fees", "Permits/Licenses", "Other"];
-
-// Mix case system — 7 regular Slaps flavors (25 bags each, same price)
-const SLAPS_FLAVORS = ["slaps-mix", "slaps-tam", "slaps-mgo", "slaps-wtm", "slaps-app", "slaps-dbx", "slaps-pkl"];
-const MIX_TARGET = 25;
-const MIX_PRICE = 40;
-const MIX_COST = 22;
-const MIX_PRESETS = [
-  { id: "mix-clasico", name: "Mix Clásico", desc: "10 Tam + 5 DblX + 5 Mgo + 5 Mix", components: [
-    { productId: "slaps-tam", bags: 10 }, { productId: "slaps-dbx", bags: 5 },
-    { productId: "slaps-mgo", bags: 5 }, { productId: "slaps-mix", bags: 5 }
-  ]},
-  { id: "mix-picoso", name: "Mix Picoso", desc: "10 Pickle + 10 DblX + 5 Tam", components: [
-    { productId: "slaps-pkl", bags: 10 }, { productId: "slaps-dbx", bags: 10 },
-    { productId: "slaps-tam", bags: 5 }
-  ]},
-  { id: "mix-frutal", name: "Mix Frutal", desc: "10 Mango + 10 Watermelon + 5 Apple", components: [
-    { productId: "slaps-mgo", bags: 10 }, { productId: "slaps-wtm", bags: 10 },
-    { productId: "slaps-app", bags: 5 }
-  ]},
-];
-const MIX_META = { "mix-custom": { name: "Slaps Mix Custom", price: MIX_PRICE, cost: MIX_COST } };
-MIX_PRESETS.forEach(p => { MIX_META[p.id] = { name: p.name, price: MIX_PRICE, cost: MIX_COST }; });
-
+// REORDER REMINDER SETTINGS
+const REMINDER_COOLDOWN_DAYS = 7;
+const DEFAULT_REORDER_CYCLE = 30;
+const URGENT_OVERDUE_DAYS = 7;
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
 const dSince = (d) => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
-const pF = (id) => PRODUCTS.find(p => p.id === id) || (MIX_META[id] ? { id, ...MIX_META[id], bags: MIX_TARGET, sku: "" } : null);
-// Display fractional stock as cases+bags
-const fmtSt = (stock, p) => {
-  if (!p || stock === Math.floor(stock)) return String(Math.round(stock));
-  const full = Math.floor(stock);
-  const rem = Math.round((stock - full) * (p.bags || 1));
-  if (full === 0) return `${rem}b`;
-  return `${full}cs+${rem}b`;
-};
-
-// Supabase config from config.js
-const SUPA_URL = SUPABASE_URL !== "YOUR_PROJECT_URL_HERE" ? SUPABASE_URL : null;
-const SUPA_KEY = SUPABASE_KEY !== "YOUR_ANON_KEY_HERE" ? SUPABASE_KEY : null;
-const SUPA_HEADERS = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
-const cloudEnabled = !!(SUPA_URL && SUPA_KEY);
-
+const pF = (id) => PRODUCTS.find(p => p.id === id);
 const S = {
   load() {
-    try { const raw = localStorage.getItem("megapg-data"); return raw ? JSON.parse(raw) : null; } catch { return null; }
-  },
-  save(data) {
-    const stamped = { ...data, updated_at: new Date().toISOString() };
-    try { localStorage.setItem("megapg-data", JSON.stringify(stamped)); } catch(e) { console.error("Save failed:", e); }
-    // Push to cloud in background
-    if (cloudEnabled) this.push(stamped).catch(() => {});
-    return stamped;
-  },
-  async push(data) {
-    if (!cloudEnabled) return false;
-    const body = { id: "main", data: JSON.stringify(data), updated_at: data.updated_at || new Date().toISOString() };
-    const resp = await fetch(`${SUPA_URL}/rest/v1/sync_data?id=eq.main`, { method: "PATCH", headers: SUPA_HEADERS, body: JSON.stringify(body) });
-    return resp.ok;
-  },
-  async pull() {
-    if (!cloudEnabled) return null;
     try {
-      const resp = await fetch(`${SUPA_URL}/rest/v1/sync_data?id=eq.main&select=data,updated_at`, { headers: SUPA_HEADERS });
-      if (!resp.ok) return null;
-      const rows = await resp.json();
-      if (!rows?.[0]?.data) return null;
-      const cloud = typeof rows[0].data === "string" ? JSON.parse(rows[0].data) : rows[0].data;
-      return cloud;
+      const raw = localStorage.getItem("megapg-data");
+      return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   },
-  async pullWebOrders() {
-    if (!cloudEnabled) return [];
-    try {
-      const resp = await fetch(`${SUPA_URL}/rest/v1/web_orders?status=eq.pending&order=created_at.desc`, { headers: SUPA_HEADERS });
-      if (!resp.ok) return [];
-      return await resp.json();
-    } catch { return []; }
-  },
-  async updateWebOrderStatus(id, status, extraFields = {}) {
-    if (!cloudEnabled) return false;
-    try {
-      const body = { status, ...extraFields };
-      if (status === "approved") body.approved_at = new Date().toISOString();
-      const resp = await fetch(`${SUPA_URL}/rest/v1/web_orders?id=eq.${id}`, {
-        method: "PATCH", headers: SUPA_HEADERS, body: JSON.stringify(body)
-      });
-      return resp.ok;
-    } catch { return false; }
+  save(data) {
+    try { localStorage.setItem("megapg-data", JSON.stringify(data)); } catch(e) { console.error("Save failed:", e); }
   },
 };
 
@@ -147,6 +74,20 @@ const calcWeeks = (orders) => {
   const earliest = Math.min(...dates);
   const weeks = Math.max(1, (Date.now() - earliest) / (7 * 86400000));
   return Math.round(weeks * 10) / 10;
+};
+
+// Calculate average reorder cycle (days between orders) for a client
+const calcClientCycle = (clientOrders) => {
+  if (clientOrders.length < 2) return DEFAULT_REORDER_CYCLE;
+  const sorted = [...clientOrders].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const gaps = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const g = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    if (g > 0) gaps.push(g);
+  }
+  if (gaps.length === 0) return DEFAULT_REORDER_CYCLE;
+  const avg = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+  return Math.max(7, Math.round(avg));
 };
 
 // WhatsApp helpers
@@ -172,12 +113,10 @@ const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "f
 const Inp = ({ label, value, onChange, type, placeholder, style: s, options, textarea }) => <div style={{ marginBottom: 10, ...s }}>{label && <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>{label}</label>}{options ? <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{options.map(o => <option key={o} value={o}>{o}</option>)}</select> : textarea ? <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={3} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, resize: "vertical" }} /> : <input type={type || "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />}</div>;
 const ST = ({ children }) => <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10, marginTop: 16, color: "#C41E3A", borderBottom: "2px solid #C41E3A", paddingBottom: 4 }}>{children}</h3>;
 
-const Dashboard = ({ clients, orders, inventory, expenses }) => {
+const Dashboard = ({ clients, orders, inventory }) => {
   const tRev = orders.reduce((s, o) => s + (o.total || 0), 0);
   const tCost = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
   const gP = tRev - tCost;
-  const tExp = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
-  const netP = gP - tExp;
   const tCases = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + it.qty, 0), 0);
   const tStock = inventory.reduce((s, it) => s + it.stock, 0);
   const pend = orders.filter(o => o.status !== "paid").reduce((s, o) => s + (o.total || 0), 0);
@@ -190,8 +129,7 @@ const Dashboard = ({ clients, orders, inventory, expenses }) => {
   // FIX #4: Velocidad semanal con semanas reales
   const pVel = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const st = inventory.find(i => i.productId === p.id)?.stock || 0; const wr = weeks > 0 ? Math.round(sold / weeks * 10) / 10 : 0; const wk = wr > 0 ? Math.round(st / wr * 10) / 10 : st > 0 ? 99 : 0; return { ...p, sold, st, wr, wk }; }).sort((a, b) => b.sold - a.sold);
   return <div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 8 }}><Card title="Revenue" value={fmt(tRev)} color="#1B7340" /><Card title="Gross profit" value={fmt(gP)} sub={tRev > 0 ? `${Math.round(gP / tRev * 100)}% margin` : ""} color="#1B7340" /><Card title="Cases sold" value={tCases} color="#1A5276" /></div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Expenses" value={fmt(tExp)} color="#D35400" /><Card title="Net profit" value={fmt(netP)} sub={tRev > 0 ? `${Math.round(netP / tRev * 100)}% net` : ""} color={netP >= 0 ? "#1B7340" : "#C41E3A"} /><Card title="Pending $" value={fmt(pend)} color={pend > 0 ? "#C41E3A" : "#1B7340"} /></div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Revenue" value={fmt(tRev)} color="#1B7340" /><Card title="Gross profit" value={fmt(gP)} sub={tRev > 0 ? `${Math.round(gP / tRev * 100)}% margin` : ""} color="#1B7340" /><Card title="Cases sold" value={tCases} color="#1A5276" /><Card title="Pending $" value={fmt(pend)} color={pend > 0 ? "#C41E3A" : "#1B7340"} /><Card title="In stock" value={`${tStock} cases`} color="#6C3483" /></div>
     {(stale.length > 0 || lowS.length > 0 || outS.length > 0) && <div style={{ background: "#FDF2E9", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #D35400" }}><div style={{ fontSize: 14, fontWeight: 700, color: "#D35400", marginBottom: 6 }}>Action needed</div>{outS.map(i => <div key={i.productId} style={{ fontSize: 12, padding: "2px 0", color: "#C41E3A" }}>OUT: <b>{i.p?.name}</b></div>)}{lowS.map(i => <div key={i.productId} style={{ fontSize: 12, padding: "2px 0", color: "#D35400" }}>LOW: <b>{i.p?.name}</b> — {i.stock} left</div>)}{stale.slice(0, 5).map(c => {
       const lastO = orders.filter(o => o.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
       return <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
@@ -204,74 +142,47 @@ const Dashboard = ({ clients, orders, inventory, expenses }) => {
 };
 
 const Clients = ({ clients, setClients, orders, saveAll }) => {
-  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null); const [form, setForm] = useState({ name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", type: "", notes: "" }); const [search, setSearch] = useState(""); const [typeFilter, setTypeFilter] = useState("");
-  const openN = () => { setForm({ name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", type: "", notes: "" }); setEdit(null); setSf(true); };
-  const openE = (c) => { setForm({ type: "", ...c }); setEdit(c.id); setSf(true); };
+  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null); const [form, setForm] = useState({ name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "" }); const [search, setSearch] = useState("");
+  const openN = () => { setForm({ name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "" }); setEdit(null); setSf(true); };
+  const openE = (c) => { setForm({ ...c }); setEdit(c.id); setSf(true); };
   const save = () => { if (!form.name) return; if (edit) { setClients(prev => { const n = prev.map(c => c.id === edit ? { ...c, ...form } : c); saveAll("clients", n); return n; }); } else { setClients(prev => { const n = [...prev, { ...form, id: uid(), created: new Date().toISOString() }]; saveAll("clients", n); return n; }); } setSf(false); };
   const del = (id) => { if (delRef.current === id) { setClients(prev => { const n = prev.filter(c => c.id !== id); saveAll("clients", n); return n; }); delRef.current = null; setDelC(null); } else { delRef.current = id; setDelC(id); setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelC(null); } }, 3000); } };
-  const fil = clients.filter(c => (!search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()) || c.type?.toLowerCase().includes(search.toLowerCase())) && (!typeFilter || c.type === typeFilter));
+  const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()));
   return <div>
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}><div style={{ display: "flex", gap: 8, flex: 1 }}><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." style={{ padding: "7px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, flex: 1, maxWidth: 220 }} /><select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}><option value="">All types</option>{STORE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div><Btn primary onClick={openN}>+ New client</Btn></div>
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8 }}><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." style={{ padding: "7px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, flex: 1, maxWidth: 280 }} /><Btn primary onClick={openN}>+ New client</Btn></div>
     {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No clients. Click "+ New client".</p>}
     {fil.map(c => { const co = orders.filter(o => o.clientId === c.id); const last = co.length > 0 ? co.sort((a, b) => new Date(b.date) - new Date(a.date))[0] : null; const ts = co.reduce((s, o) => s + (o.total || 0), 0); const days = last ? dSince(last.date) : null; const fu = days !== null && days > FOLLOWUP_DAYS;
       return <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}><span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span><Badge text={c.tier} color={TIER_CLR[c.tier]} />{c.type && <Badge text={c.type} color="#2E86C1" />}{c.zone && <Badge text={c.zone} color="#6C3483" />}{fu && <Badge text={`${days}d — follow up!`} color="#D35400" />}</div><div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}><span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span><Badge text={c.tier} color={TIER_CLR[c.tier]} />{c.zone && <Badge text={c.zone} color="#6C3483" />}{fu && <Badge text={`${days}d — follow up!`} color="#D35400" />}</div><div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div></div>
         <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div><div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div></div>
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {c.phone && <WaBtn phone={c.phone} msg={`Hi ${c.contact || c.name}, it's José from Mega PG Distributions!\n\nHow are the Slaps selling? Ready for a reorder?\n\n(707) 360-7420`} label="WA" small />}
           <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn></div></div>; })}
     {sf && <Modal title={edit ? "Edit client" : "New client"} onClose={() => setSf(false)}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><Inp label="Store name *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Dulceria Mi Carnaval" /><Inp label="Contact" value={form.contact} onChange={v => setForm(p => ({ ...p, contact: v }))} placeholder="Juan Pérez" /><Inp label="Phone" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(408) 555-1234" /><Inp label="Zone" value={form.zone} onChange={v => setForm(p => ({ ...p, zone: v }))} options={ZONES} /><Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} /><Inp label="Business type" value={form.type} onChange={v => setForm(p => ({ ...p, type: v }))} options={STORE_TYPES} /><Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" style={{ gridColumn: "1 / -1" }} /></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><Inp label="Store name *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Dulceria Mi Carnaval" /><Inp label="Contact" value={form.contact} onChange={v => setForm(p => ({ ...p, contact: v }))} placeholder="Juan Pérez" /><Inp label="Phone" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(408) 555-1234" /><Inp label="Zone" value={form.zone} onChange={v => setForm(p => ({ ...p, zone: v }))} options={ZONES} /><Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} /><Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" /></div>
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea /><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => setSf(false)}>Cancel</Btn><Btn primary onClick={save}>{edit ? "Update" : "Add"}</Btn></div></Modal>}
   </div>;
 };
 
 const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
-  const [sf, setSf] = useState(false); const [delConfirm, setDelConfirm] = useState(null); const delORef = useRef(null); const [stockAck, setStockAck] = useState(false);
-  const [form, setForm] = useState({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" });
-  const [showMixer, setShowMixer] = useState(false);
-  const [mixBags, setMixBags] = useState({});
-  const [mixPreset, setMixPreset] = useState("");
-
-  const openN = () => { setForm({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" }); setShowMixer(false); setMixBags({}); setMixPreset(""); setSf(true); };
+  const [sf, setSf] = useState(false); const [delConfirm, setDelConfirm] = useState(null); const delORef = useRef(null); const [stockAck, setStockAck] = useState(false); const [form, setForm] = useState({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" });
+  const openN = () => { setForm({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" }); setSf(true); };
   const addL = () => setForm(p => ({ ...p, items: [...p.items, { productId: "", qty: 1 }] }));
   const remL = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
   const upL = (i, f, v) => setForm(p => { const items = [...p.items]; items[i] = { ...items[i], [f]: f === "qty" ? Math.max(1, parseInt(v) || 1) : v }; return { ...p, items }; });
   const cl = clients.find(c => c.id === form.clientId); const disc = cl ? TIER_DISC[cl.tier] || 0 : 0;
-
-  // Mix helpers
-  const mixTotal = Object.values(mixBags).reduce((s, v) => s + (parseInt(v) || 0), 0);
-  const mixReady = mixTotal === MIX_TARGET;
-  const applyPreset = (preset) => {
-    const bags = {}; preset.components.forEach(c => { bags[c.productId] = c.bags; });
-    setMixBags(bags); setMixPreset(preset.id);
-  };
-  const addMixToOrder = () => {
-    if (!mixReady) return;
-    const components = Object.entries(mixBags).filter(([_, b]) => (parseInt(b) || 0) > 0).map(([pid, b]) => ({ productId: pid, bags: parseInt(b) }));
-    const mixId = mixPreset || "mix-custom";
-    setForm(p => ({ ...p, items: [...p.items.filter(it => it.productId), { productId: mixId, qty: 1, mixComponents: components }] }));
-    setShowMixer(false); setMixBags({}); setMixPreset("");
-  };
-
   const calcT = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.price * it.qty * (1 - disc) : 0); }, 0);
   const calcC = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.cost * it.qty : 0); }, 0);
 
+  // FIX #5: Checar stock antes de guardar orden
   const getStockWarnings = () => {
     const warnings = [];
     form.items.filter(it => it.productId).forEach(it => {
-      if (it.mixComponents) {
-        // Mix item — check each component in bags→cases
-        it.mixComponents.forEach(mc => {
-          const inv = inventory.find(i => i.productId === mc.productId);
-          const avail = inv?.stock || 0;
-          const needed = (mc.bags / MIX_TARGET) * it.qty;
-          if (needed > avail) { const p = pF(mc.productId); warnings.push(`${p?.name}: need ${mc.bags * it.qty}bags (${needed.toFixed(1)}cs), only ${fmtSt(avail, p)} avail`); }
-        });
-      } else {
-        const inv = inventory.find(i => i.productId === it.productId);
-        const avail = inv?.stock || 0;
-        if (it.qty > avail) { const p = pF(it.productId); warnings.push(`${p?.name}: requesting ${it.qty}, only ${fmtSt(avail, p)} in stock`); }
+      const inv = inventory.find(i => i.productId === it.productId);
+      const avail = inv?.stock || 0;
+      if (it.qty > avail) {
+        const p = pF(it.productId);
+        warnings.push(`${p?.name}: requesting ${it.qty}, only ${avail} in stock`);
       }
     });
     return warnings;
@@ -280,96 +191,38 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
   const saveO = () => { if (!form.clientId || form.items.every(it => !it.productId)) return;
     const warnings = getStockWarnings();
     if (warnings.length > 0 && !stockAck) { setStockAck(true); return; }
-    const vi = form.items.filter(it => it.productId); const total = calcT();
-    const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() };
-    // Deduct inventory
-    const ni = [...inventory];
-    vi.forEach(it => {
-      if (it.mixComponents) {
-        // Mix: deduct fractional cases from each component
-        it.mixComponents.forEach(mc => {
-          const casesToDeduct = (mc.bags / MIX_TARGET) * it.qty;
-          const idx = ni.findIndex(inv => inv.productId === mc.productId);
-          if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, Math.round((ni[idx].stock - casesToDeduct) * 100) / 100) };
-        });
-      } else {
-        // Regular: deduct whole cases
-        const idx = ni.findIndex(inv => inv.productId === it.productId);
-        if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) };
-      }
-    });
-    setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; });
-    setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false);
-  };
+    const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
   const upSt = (id, st) => setOrders(prev => { const n = prev.map(o => o.id === id ? { ...o, status: st } : o); saveAll("orders", n); return n; });
   const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
-  const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty, ...(it.mixComponents ? { mixComponents: it.mixComponents } : {}) })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
-
+  const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
   return <div>
     <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={openN}>+ New order</Btn></div>
     {orders.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No orders yet.</p>}
     {orders.slice().reverse().map(o => { const c = clients.find(x => x.id === o.clientId); const tc = o.items.reduce((a, it) => a + it.qty, 0); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); const prof = (o.total || 0) - cost;
-      const hasMix = o.items.some(it => it.mixComponents);
-      return <div key={o.id} style={{ padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{hasMix && <Badge text="MIX" color="#6C3483" />}{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}</div>
+      return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
+        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}><div style={{ textAlign: "right", marginRight: 4 }}><div style={{ fontWeight: 700 }}>{fmt(o.total)}</div><div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div></div>
         <select value={o.status} onChange={e => upSt(o.id, e.target.value)} style={{ padding: "3px 6px", border: "1px solid #ddd", borderRadius: 4, fontSize: 11, background: o.status === "paid" ? "#E8F5E8" : o.status === "delivered" ? "#EBF5FB" : "#FDF2E9" }}><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="paid">Paid</option></select>
         {c?.phone && <WaBtn phone={c.phone} msg={o.status !== "paid" ? waPayment(o, c) : waOrder(o, c)} label={o.status !== "paid" ? "Remind" : "WA"} small />}
         <Btn small onClick={() => qReorder(o)} style={{ fontSize: 10 }}>Reorder</Btn><Btn small onClick={() => { setRO(o); setTab("receipt"); }} style={{ fontSize: 10 }}>Receipt</Btn>
-        <Btn small danger onClick={() => delO(o.id)} style={delConfirm === o.id ? { fontSize: 10, minWidth: 52, background: "#8B0000" } : { fontSize: 10 }}>{delConfirm === o.id ? "Sure?" : "✕"}</Btn></div></div>
-        {hasMix && <div style={{ fontSize: 11, color: "#6C3483", marginTop: 4, paddingLeft: 8, borderLeft: "2px solid #6C3483" }}>{o.items.filter(it => it.mixComponents).map((it, i) => <div key={i}>{pF(it.productId)?.name || "Mix"}: {it.mixComponents.map(mc => `${pF(mc.productId)?.name?.replace("Slaps ", "")} ×${mc.bags}`).join(", ")}</div>)}</div>}
-      </div>; })}
-
+        <Btn small danger onClick={() => delO(o.id)} style={delConfirm === o.id ? { fontSize: 10, minWidth: 52, background: "#8B0000" } : { fontSize: 10 }}>{delConfirm === o.id ? "Sure?" : "✕"}</Btn></div></div>; })}
     {sf && <Modal title="New order" onClose={() => setSf(false)} wide>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><div style={{ marginBottom: 10 }}><label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>Client *</label><select value={form.clientId} onChange={e => setForm(p => ({ ...p, clientId: e.target.value }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.tier})</option>)}</select></div><Inp label="Date" type="date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} /></div>
       {form.clientId && cl && <div style={{ fontSize: 12, color: "#1B7340", marginBottom: 10, padding: "6px 10px", background: "#E8F5E8", borderRadius: 6 }}>{cl.name} — {cl.tier} {disc > 0 ? `(${Math.round(disc * 100)}% off)` : "(list price)"}</div>}
       <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Items</label>
       {form.items.map((it, i) => {
-        if (it.mixComponents) {
-          // Display mix item inline
-          return <div key={i} style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", padding: "6px 10px", background: "#F4ECF7", borderRadius: 6, border: "1px solid #D2B4DE" }}>
-            <div style={{ flex: 2 }}>
-              <b style={{ fontSize: 12, color: "#6C3483" }}>{pF(it.productId)?.name || "Slaps Mix"}</b>
-              <div style={{ fontSize: 11, color: "#777" }}>{it.mixComponents.map(mc => `${pF(mc.productId)?.name?.replace("Slaps ", "")} ×${mc.bags}`).join(", ")}</div>
-            </div>
-            <input type="number" min="1" value={it.qty} onChange={e => upL(i, "qty", e.target.value)} style={{ width: 55, padding: "7px", border: "1px solid #D2B4DE", borderRadius: 6, fontSize: 13, textAlign: "center" }} />
-            <span style={{ fontSize: 12, color: "#1B7340", minWidth: 60, fontWeight: 600 }}>{fmt(MIX_PRICE * it.qty * (1 - disc))}</span>
-            <button onClick={() => remL(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#C41E3A", fontSize: 16 }}>✕</button>
-          </div>;
-        }
+        // FIX #5: Mostrar stock disponible y warning visual
         const inv = it.productId ? inventory.find(x => x.productId === it.productId) : null;
         const avail = inv?.stock || 0;
-        const p = it.productId ? pF(it.productId) : null;
         const overStock = it.productId && it.qty > avail;
         return <div key={i} style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
-          <select value={it.productId} onChange={e => upL(i, "productId", e.target.value)} style={{ flex: 2, padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Product --</option>{PRODUCTS.map(pr => { const pInv = inventory.find(x => x.productId === pr.id); return <option key={pr.id} value={pr.id}>{pr.name} ({fmt(pr.price)}) — {fmtSt(pInv?.stock || 0, pr)} avail</option>; })}</select>
+          <select value={it.productId} onChange={e => upL(i, "productId", e.target.value)} style={{ flex: 2, padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Product --</option>{PRODUCTS.map(p => { const pInv = inventory.find(x => x.productId === p.id); return <option key={p.id} value={p.id}>{p.name} ({fmt(p.price)}) — {pInv?.stock || 0} avail</option>; })}</select>
           <input type="number" min="1" value={it.qty} onChange={e => upL(i, "qty", e.target.value)} style={{ width: 55, padding: "7px", border: `1px solid ${overStock ? "#C41E3A" : "#ddd"}`, borderRadius: 6, fontSize: 13, textAlign: "center", background: overStock ? "#FDE8E8" : "#fff" }} />
           <span style={{ fontSize: 12, color: "#1B7340", minWidth: 60, fontWeight: 600 }}>{it.productId ? fmt(pF(it.productId)?.price * it.qty * (1 - disc)) : ""}</span>
-          {overStock && <span style={{ fontSize: 10, color: "#C41E3A", fontWeight: 700, whiteSpace: "nowrap" }}>only {fmtSt(avail, p)}!</span>}
+          {overStock && <span style={{ fontSize: 10, color: "#C41E3A", fontWeight: 700, whiteSpace: "nowrap" }}>only {avail}!</span>}
           {form.items.length > 1 && <button onClick={() => remL(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#C41E3A", fontSize: 16 }}>✕</button>}
         </div>; })}
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}><Btn small onClick={addL}>+ Add product</Btn><Btn small onClick={() => { setShowMixer(true); setMixBags({}); setMixPreset(""); }} style={{ background: "#6C3483", color: "#fff" }}>🔀 Add Mix Case</Btn></div>
-
-      {showMixer && <div style={{ margin: "12px 0", padding: "14px 16px", background: "#F4ECF7", borderRadius: 8, border: "1px solid #D2B4DE" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <b style={{ color: "#6C3483", fontSize: 14 }}>🔀 Mix Case Builder ({mixTotal}/{MIX_TARGET} bags)</b>
-          <button onClick={() => setShowMixer(false)} style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: "#999" }}>✕</button>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>{MIX_PRESETS.map(p => <Btn key={p.id} small onClick={() => applyPreset(p)} style={mixPreset === p.id ? { background: "#6C3483", color: "#fff" } : { border: "1px solid #6C3483", color: "#6C3483" }}>{p.name}</Btn>)}<Btn small onClick={() => { setMixBags({}); setMixPreset(""); }}>Clear</Btn></div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px" }}>{SLAPS_FLAVORS.map(fid => {
-          const p = pF(fid); const inv = inventory.find(x => x.productId === fid); const avail = inv?.stock || 0; const totalBags = Math.round(avail * (p?.bags || 25));
-          return <div key={fid} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
-            <span style={{ flex: 1, fontSize: 12 }}>{p?.name?.replace("Slaps ", "")}</span>
-            <span style={{ fontSize: 10, color: "#999", minWidth: 40 }}>{totalBags}b avail</span>
-            <input type="number" min="0" max={MIX_TARGET} value={mixBags[fid] || ""} onChange={e => setMixBags(prev => ({ ...prev, [fid]: e.target.value }))} placeholder="0" style={{ width: 50, padding: "4px", border: "1px solid #D2B4DE", borderRadius: 4, fontSize: 13, textAlign: "center" }} />
-          </div>; })}</div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: mixReady ? "#1B7340" : mixTotal > MIX_TARGET ? "#C41E3A" : "#D35400" }}>{mixTotal}/{MIX_TARGET} bags {mixReady ? "✓ Ready!" : mixTotal > MIX_TARGET ? "— too many!" : ""}</div>
-          <Btn primary onClick={addMixToOrder} disabled={!mixReady} style={{ background: mixReady ? "#6C3483" : "#ccc" }}>Add mix to order</Btn>
-        </div>
-      </div>}
-
+      <Btn small onClick={addL} style={{ marginTop: 8 }}>+ Add product</Btn>
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea style={{ marginTop: 10 }} />
       {getStockWarnings().length > 0 && <div style={{ background: "#FDF2E9", padding: "8px 12px", borderRadius: 6, marginTop: 8, fontSize: 12, color: "#D35400", borderLeft: "3px solid #D35400" }}>
         <b>Stock warnings:</b> {getStockWarnings().join("; ")}
@@ -392,11 +245,10 @@ const Inventory = ({ inventory, setInventory, orders, saveAll }) => {
   return <div>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}><div style={{ display: "flex", gap: 10 }}><Card title="Cost" value={fmt(tC)} color="#C41E3A" /><Card title="Retail" value={fmt(tR)} color="#1B7340" /><Card title="Potential profit" value={fmt(tR - tC)} color="#6C3483" /></div><Btn primary onClick={openR}>+ Manual restock</Btn></div>
     {PRODUCTS.map(p => { const inv = inventory.find(i => i.productId === p.id); const st = inv?.stock || 0; const low = st > 0 && st <= LOW; const out = st === 0; const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const wr = weeks > 0 ? Math.round(sold / weeks * 10) / 10 : 0; const wl = wr > 0 ? Math.round(st / wr * 10) / 10 : null;
-      const hasFrac = st !== Math.floor(st);
       return <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 12px", background: out ? "#FDE8E8" : low ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 3, fontSize: 13 }}>
         <div><b>{p.name}</b> <span style={{ color: "#999", fontSize: 11 }}>{p.sku}</span></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}><span style={{ fontSize: 11, color: "#999" }}>{fmt(p.cost)} / {fmt(p.price)}</span><span style={{ fontSize: 11, color: "#777" }}>~{wr}/wk</span>{wl !== null && wl < 3 && <Badge text={`${wl}wk`} color="#C41E3A" />}<span style={{ fontSize: 18, fontWeight: 900, color: out ? "#C41E3A" : low ? "#D35400" : "#1B7340", minWidth: 50, textAlign: "right" }}>{fmtSt(st, p)}</span>{hasFrac && <span style={{ fontSize: 10, color: "#777" }}>({Math.round(st * p.bags)}b)</span>}{(out || low) && <Badge text={out ? "OUT" : "LOW"} color={out ? "#C41E3A" : "#D35400"} />}</div></div>; })}
-    {sr && <Modal title="Manual restock" onClose={() => setSr(false)}><p style={{ fontSize: 13, color: "#777", marginBottom: 12 }}>Enter cases to add. For auto-restock from invoices, use Purchases tab.</p>{PRODUCTS.map(p => { const curSt = inventory.find(i => i.productId === p.id)?.stock || 0; return <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}><span style={{ fontSize: 13 }}>{p.name} <span style={{ color: "#999", fontSize: 11 }}>(stock: {fmtSt(curSt, p)}{curSt !== Math.floor(curSt) ? ` = ${Math.round(curSt * p.bags)}b` : ""})</span></span><input type="number" min="0" value={ri.find(r => r.productId === p.id)?.add || 0} onChange={e => setRi(prev => prev.map(r => r.productId === p.id ? { ...r, add: parseInt(e.target.value) || 0 } : r))} style={{ width: 60, padding: "5px", border: "1px solid #ddd", borderRadius: 4, fontSize: 13, textAlign: "center" }} /></div>; })}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}><Btn onClick={() => setSr(false)}>Cancel</Btn><Btn primary onClick={doR}>Save</Btn></div></Modal>}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}><span style={{ fontSize: 11, color: "#999" }}>{fmt(p.cost)} / {fmt(p.price)}</span><span style={{ fontSize: 11, color: "#777" }}>~{wr}/wk</span>{wl !== null && wl < 3 && <Badge text={`${wl}wk`} color="#C41E3A" />}<span style={{ fontSize: 18, fontWeight: 900, color: out ? "#C41E3A" : low ? "#D35400" : "#1B7340", minWidth: 50, textAlign: "right" }}>{st}</span>{(out || low) && <Badge text={out ? "OUT" : "LOW"} color={out ? "#C41E3A" : "#D35400"} />}</div></div>; })}
+    {sr && <Modal title="Manual restock" onClose={() => setSr(false)}><p style={{ fontSize: 13, color: "#777", marginBottom: 12 }}>For auto-restock from invoices, use Purchases tab.</p>{PRODUCTS.map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}><span style={{ fontSize: 13 }}>{p.name} <span style={{ color: "#999", fontSize: 11 }}>(stock: {inventory.find(i => i.productId === p.id)?.stock || 0})</span></span><input type="number" min="0" value={ri.find(r => r.productId === p.id)?.add || 0} onChange={e => setRi(prev => prev.map(r => r.productId === p.id ? { ...r, add: parseInt(e.target.value) || 0 } : r))} style={{ width: 60, padding: "5px", border: "1px solid #ddd", borderRadius: 4, fontSize: 13, textAlign: "center" }} /></div>)}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}><Btn onClick={() => setSr(false)}>Cancel</Btn><Btn primary onClick={doR}>Save</Btn></div></Modal>}
   </div>;
 };
 
@@ -427,25 +279,17 @@ const Purchases = ({ purchases, setPurchases, inventory, setInventory, saveAll }
   </div>;
 };
 
-const Reports = ({ orders, clients, purchases, expenses }) => {
+const Reports = ({ orders, clients, purchases }) => {
   // FIX #4: Usar semanas reales
   const weeks = calcWeeks(orders);
   const md = {}; orders.forEach(o => { const m = o.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; md[m].rev += o.total || 0; md[m].cost += o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); md[m].cases += o.items.reduce((a, it) => a + it.qty, 0); md[m].orders++; });
-  // Add expenses to monthly breakdown
-  expenses.forEach(e => { const m = e.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; if (!md[m].exp) md[m].exp = 0; md[m].exp += e.amount || 0; });
   const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + (p.price * (1 - (o.discount || 0))) * it.qty, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
   const tR = orders.reduce((s, o) => s + (o.total || 0), 0); const tC = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
-  const tExp = expenses.reduce((s, e) => s + (e.amount || 0), 0);
-  const netProfit = tR - tC - tExp;
-  // Expense category totals
-  const expCats = {}; expenses.forEach(e => { expCats[e.category] = (expCats[e.category] || 0) + (e.amount || 0); });
   return <div>
     <ST>P&L summary <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)} week span)</span></ST>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 8 }}><Card title="Revenue" value={fmt(tR)} color="#1B7340" /><Card title="COGS" value={fmt(tC)} color="#C41E3A" /><Card title="Gross profit" value={fmt(tR - tC)} sub={tR > 0 ? `${Math.round((tR - tC) / tR * 100)}% margin` : ""} color="#1B7340" /></div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Operating expenses" value={fmt(tExp)} color="#D35400" /><Card title="Net profit" value={fmt(netProfit)} sub={tR > 0 ? `${Math.round(netProfit / tR * 100)}% net margin` : ""} color={netProfit >= 0 ? "#1B7340" : "#C41E3A"} /><Card title="Purchased" value={fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))} color="#1A5276" /></div>
-    {Object.keys(expCats).length > 0 && <><ST>Expense breakdown</ST>{Object.entries(expCats).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{cat}</span><span style={{ color: "#C41E3A", fontWeight: 600 }}>{fmt(amt)}</span></div>)}</>}
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Revenue" value={fmt(tR)} color="#1B7340" /><Card title="COGS" value={fmt(tC)} color="#C41E3A" /><Card title="Gross profit" value={fmt(tR - tC)} sub={tR > 0 ? `${Math.round((tR - tC) / tR * 100)}%` : ""} color="#1B7340" /><Card title="Purchased" value={fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))} color="#1A5276" /></div>
     <ST>Monthly breakdown</ST>
-    {Object.entries(md).sort().reverse().map(([m, d]) => { const exp = d.exp || 0; const net = d.rev - d.cost - exp; return <div key={m} style={{ padding: "7px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between" }}><b style={{ minWidth: 70 }}>{m}</b><span>{d.orders} ord</span><span>{d.cases} cases</span><span>Rev: {fmt(d.rev)}</span><span>COGS: {fmt(d.cost)}</span>{exp > 0 && <span style={{ color: "#D35400" }}>Exp: {fmt(exp)}</span>}<span style={{ color: net >= 0 ? "#1B7340" : "#C41E3A", fontWeight: 700 }}>Net: {fmt(net)}</span></div></div>; })}
+    {Object.entries(md).sort().reverse().map(([m, d]) => <div key={m} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><b style={{ minWidth: 70 }}>{m}</b><span>{d.orders} ord</span><span>{d.cases} cases</span><span>Rev: {fmt(d.rev)}</span><span>Cost: {fmt(d.cost)}</span><span style={{ color: "#1B7340", fontWeight: 700 }}>Profit: {fmt(d.rev - d.cost)}</span><span style={{ fontSize: 11, color: "#777" }}>{d.rev > 0 ? Math.round((d.rev - d.cost) / d.rev * 100) : 0}%</span></div>)}
     <ST>Product performance</ST>
     {ps.filter(p => p.sold > 0).map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span style={{ minWidth: 160 }}>{p.name}</span><span>{p.sold} cases</span><span>Rev: {fmt(p.rev)}</span><span style={{ color: "#1B7340", fontWeight: 600 }}>Profit: {fmt(p.prof)}</span></div>)}
   </div>;
@@ -546,88 +390,11 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
     <div style={{ maxWidth: 500, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
       <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}><div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG DISTRIBUTIONS</div><div style={{ fontSize: 11, color: "#777" }}>Authentic Mexican Candy • Northern California</div><div style={{ fontSize: 12, marginTop: 4 }}>José Flores • (707) 360-7420 • megapg.norcal@gmail.com</div></div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 12 }}><div><b>{cl?.name}</b>{cl?.address && <div style={{ color: "#777" }}>{cl.address}</div>}{cl?.phone && <div style={{ color: "#777" }}>{cl.phone}</div>}</div><div style={{ textAlign: "right" }}><b>#{order.id.slice(-6).toUpperCase()}</b><div style={{ color: "#777" }}>{fmtD(order.date)}</div><Badge text={order.status} color={ST_CLR[order.status]} /></div></div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Product</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Qty</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Unit</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <><tr key={i} style={{ borderBottom: it.mixComponents ? "none" : "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>{it.mixComponents && <tr key={`${i}-mix`} style={{ borderBottom: "1px solid #eee" }}><td colSpan={4} style={{ padding: "2px 0 6px 12px", fontSize: 10, color: "#6C3483" }}>{it.mixComponents.map(mc => `${pF(mc.productId)?.name?.replace("Slaps ", "")} ×${mc.bags}`).join(", ")}</td></tr>}</>; })}</tbody></table>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Product</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Qty</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Unit</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody></table>
       <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>{disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Discount ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}<div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div></div>
       {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notes: {order.notes}</div>}
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>Thank you! • megapgcandies.com • slapslollipop.com</div>
     </div></div>;
-};
-
-// ===== EXPENSES =====
-const Expenses = ({ expenses, setExpenses, saveAll }) => {
-  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null);
-  const [delId, setDelId] = useState(null); const delRef = useRef(null);
-  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), category: "", amount: "", description: "", vendor: "", deductible: true });
-  const [monthFilter, setMonthFilter] = useState("");
-  const [catFilter, setCatFilter] = useState("");
-
-  const openN = () => { setForm({ date: new Date().toISOString().slice(0, 10), category: "", amount: "", description: "", vendor: "", deductible: true }); setEdit(null); setSf(true); };
-  const openE = (ex) => { setForm({ deductible: true, ...ex, amount: String(ex.amount) }); setEdit(ex.id); setSf(true); };
-  const save = () => {
-    if (!form.category || !form.amount || Number(form.amount) <= 0) return;
-    const entry = { ...form, amount: Number(form.amount) };
-    if (edit) { setExpenses(prev => { const n = prev.map(e => e.id === edit ? { ...e, ...entry } : e); saveAll("expenses", n); return n; }); }
-    else { setExpenses(prev => { const n = [...prev, { ...entry, id: uid(), created: new Date().toISOString() }]; saveAll("expenses", n); return n; }); }
-    setSf(false);
-  };
-  const del = (id) => { if (delRef.current === id) { setExpenses(prev => { const n = prev.filter(e => e.id !== id); saveAll("expenses", n); return n; }); delRef.current = null; setDelId(null); } else { delRef.current = id; setDelId(id); setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelId(null); } }, 3000); } };
-
-  const months = [...new Set(expenses.map(e => e.date?.slice(0, 7)).filter(Boolean))].sort().reverse();
-  const fil = expenses.filter(e => (!monthFilter || e.date?.startsWith(monthFilter)) && (!catFilter || e.category === catFilter)).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const totalFil = fil.reduce((s, e) => s + (e.amount || 0), 0);
-  const totalAll = expenses.reduce((s, e) => s + (e.amount || 0), 0);
-  const deductible = expenses.filter(e => e.deductible !== false).reduce((s, e) => s + (e.amount || 0), 0);
-
-  // Category summary
-  const catSums = {}; fil.forEach(e => { catSums[e.category] = (catSums[e.category] || 0) + (e.amount || 0); });
-
-  return <div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
-      <Card title="Total expenses" value={fmt(totalAll)} color="#C41E3A" />
-      <Card title="Tax deductible" value={fmt(deductible)} color="#D35400" />
-      <Card title="This view" value={fmt(totalFil)} sub={`${fil.length} entries`} color="#1A5276" />
-    </div>
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-      <div style={{ display: "flex", gap: 8 }}>
-        <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} style={{ padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}><option value="">All months</option>{months.map(m => <option key={m} value={m}>{m}</option>)}</select>
-        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}><option value="">All categories</option>{EXPENSE_CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
-      </div>
-      <Btn primary onClick={openN}>+ New expense</Btn>
-    </div>
-
-    {Object.keys(catSums).length > 0 && <div style={{ marginBottom: 16 }}><ST>By category {monthFilter && `(${monthFilter})`}</ST>{Object.entries(catSums).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{cat}</span><b style={{ color: "#C41E3A" }}>{fmt(amt)}</b></div>)}</div>}
-
-    {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No expenses yet. Click "+ New expense".</p>}
-    {fil.map(e => <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-          <b>{e.description || e.category}</b>
-          <Badge text={e.category} color="#2E86C1" />
-          {e.deductible !== false && <Badge text="Deductible" color="#1B7340" />}
-        </div>
-        <div style={{ fontSize: 12, color: "#777" }}>{fmtD(e.date)} {e.vendor && `• ${e.vendor}`}</div>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        <b style={{ color: "#C41E3A", fontSize: 15 }}>{fmt(e.amount)}</b>
-        <Btn small onClick={() => openE(e)}>Edit</Btn>
-        <Btn small danger onClick={() => del(e.id)} style={delId === e.id ? { background: "#8B0000" } : {}}>{delId === e.id ? "Sure?" : "✕"}</Btn>
-      </div>
-    </div>)}
-
-    {sf && <Modal title={edit ? "Edit expense" : "New expense"} onClose={() => setSf(false)}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
-        <Inp label="Category *" value={form.category} onChange={v => setForm(p => ({ ...p, category: v }))} options={EXPENSE_CATS} />
-        <Inp label="Amount *" type="number" value={form.amount} onChange={v => setForm(p => ({ ...p, amount: v }))} placeholder="25.00" />
-        <Inp label="Date" type="date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} />
-        <Inp label="Vendor/Payee" value={form.vendor} onChange={v => setForm(p => ({ ...p, vendor: v }))} placeholder="Shell, Costco, UPS..." />
-      </div>
-      <Inp label="Description" value={form.description} onChange={v => setForm(p => ({ ...p, description: v }))} placeholder="Gas for Santa Rosa delivery run" />
-      <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-        <input type="checkbox" checked={form.deductible !== false} onChange={e => setForm(p => ({ ...p, deductible: e.target.checked }))} /> Tax deductible
-      </label>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => setSf(false)}>Cancel</Btn><Btn primary onClick={save}>{edit ? "Update" : "Add expense"}</Btn></div>
-    </Modal>}
-  </div>;
 };
 
 // ===== MARKET INTELLIGENCE =====
@@ -643,7 +410,6 @@ const FieldDashboard = ({ visits }) => {
   const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
   const zones = ZONES.filter(z => z !== "Other").map(z => { const zv = visits.filter(v => v.zone === z); return { zone: z, total: zv.length, mega: zv.filter(v => v.brand === "Mega PG" || v.brand === "Both").length, pigui: zv.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length }; }).filter(z => z.total > 0);
   const supplierCounts = {}; visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
-  const typeCounts = {}; visits.forEach(v => { const t = v.storeType || "Unknown"; typeCounts[t] = (typeCounts[t] || 0) + 1; });
 
   return <div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
@@ -654,7 +420,6 @@ const FieldDashboard = ({ visits }) => {
     </div>
     {avgPrice > 0 && <div style={{ fontSize: 13, color: "#555", marginBottom: 12 }}>Avg public price: <b>{fmt(avgPrice)}</b>/bag across {prices.length} stores</div>}
     {zones.length > 0 && <><ST>Zone penetration</ST>{zones.map(z => <div key={z.zone} style={{ marginBottom: 8 }}><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{z.zone} <span style={{ color: "#999", fontWeight: 400 }}>({z.total} stores)</span></div><div style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: "#f0f0f0" }}>{z.mega > 0 && <div style={{ width: `${z.mega / z.total * 100}%`, background: "#1B7340" }} title={`Mega PG: ${z.mega}`} />}{z.pigui > 0 && <div style={{ width: `${z.pigui / z.total * 100}%`, background: "#C41E3A" }} title={`Pigüi USA: ${z.pigui}`} />}</div><div style={{ fontSize: 10, color: "#999", marginTop: 1 }}><span style={{ color: "#1B7340" }}>■ Mega PG: {z.mega}</span> <span style={{ color: "#C41E3A", marginLeft: 8 }}>■ Pigüi USA: {z.pigui}</span></div></div>)}</>}
-    {Object.keys(typeCounts).length > 0 && <><ST>By business type</ST>{Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).map(([typ, cnt]) => <div key={typ} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{typ}</span><b>{cnt}</b></div>)}</>}
     {Object.keys(supplierCounts).length > 0 && <><ST>Supplier channels</ST>{Object.entries(supplierCounts).sort((a, b) => b[1] - a[1]).map(([sup, cnt]) => <div key={sup} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{sup}</span><b>{cnt}</b></div>)}</>}
     {total === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No field visits yet. Go to "Visits" tab to start capturing data.</div>}
   </div>;
@@ -700,10 +465,10 @@ const VisitsList = ({ visits, onEdit, onDelete }) => {
     {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 30 }}>No visits found.</p>}
     {fil.map(v => <div key={v.id} style={{ padding: "10px 14px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5, borderLeft: `4px solid ${BRAND_CLR[v.brand] || "#888"}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div><b style={{ fontSize: 14 }}>{v.storeName}</b> {v.zone && <Badge text={v.zone} color="#6C3483" />} {v.storeType && <Badge text={v.storeType} color="#2E86C1" />} {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? "#1B7340" : v.interest.includes("Somewhat") ? "#D35400" : v.interest === "Already a client" ? "#1A5276" : "#888"} />}</div>
+        <div><b style={{ fontSize: 14 }}>{v.storeName}</b> {v.zone && <Badge text={v.zone} color="#6C3483" />} {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? "#1B7340" : v.interest.includes("Somewhat") ? "#D35400" : v.interest === "Already a client" ? "#1A5276" : "#888"} />}</div>
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}><Btn small onClick={() => onEdit(v)}>Edit</Btn><Btn small danger onClick={() => del(v.id)} style={delId === v.id ? { background: "#8B0000" } : {}}>{delId === v.id ? "Sure?" : "✕"}</Btn></div>
       </div>
-      <div style={{ fontSize: 12, color: "#777" }}>{fmtD(v.date)} {v.contact && `• ${v.contact}`} {v.publicPrice > 0 && `• ${fmt(v.publicPrice)}/bag`}</div>
+      <div style={{ fontSize: 12, color: "#777" }}>{fmtD(v.date)} {v.storeType && `• ${v.storeType}`} {v.contact && `• ${v.contact}`} {v.publicPrice > 0 && `• ${fmt(v.publicPrice)}/bag`}</div>
       {v.notes && <div style={{ fontSize: 12, color: "#555", marginTop: 4, lineHeight: 1.4 }}>{v.notes.length > 150 ? v.notes.slice(0, 150) + "..." : v.notes}</div>}
       {v.productsSeen?.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>{v.productsSeen.map(p => <span key={p} style={{ fontSize: 10, padding: "1px 6px", background: "#f0f0f0", borderRadius: 3, color: "#666" }}>{p}</span>)}</div>}
     </div>)}
@@ -744,101 +509,106 @@ const FieldExport = ({ visits }) => {
   </div>;
 };
 
-// === WEB ORDERS — Pedidos que entran automáticamente desde la página web ===
-const WebOrders = ({ webOrders, clients, onApprove, onReject, refreshing, onRefresh }) => {
-  const [rejectingId, setRejectingId] = useState(null);
-  const [rejectReason, setRejectReason] = useState("");
-  const [expandedId, setExpandedId] = useState(null);
+const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
+  const [edits, setEdits] = useState({});
+  const [copied, setCopied] = useState(null);
 
-  const getClientByPhone = (phone) => {
-    const normalized = (phone || "").replace(/\D/g, "");
-    return clients.find(c => (c.phone || "").replace(/\D/g, "") === normalized);
+  const rows = clients.map(c => {
+    const co = orders.filter(o => o.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (co.length === 0) return null;
+    const lastO = co[0];
+    const daysSince = dSince(lastO.date);
+    const cycle = calcClientCycle(co);
+    const overdue = daysSince - cycle;
+    const lastReminder = reminders[c.id]?.lastSent;
+    const dsReminder = lastReminder ? dSince(lastReminder) : 999;
+    const inCooldown = dsReminder < REMINDER_COOLDOWN_DAYS;
+    const prodCount = {};
+    co.forEach(o => o.items.forEach(it => { prodCount[it.productId] = (prodCount[it.productId] || 0) + it.qty; }));
+    const topProds = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([pid]) => pF(pid)?.name).filter(Boolean);
+    return { c, lastO, daysSince, cycle, overdue, inCooldown, dsReminder, topProds, orderCount: co.length };
+  }).filter(r => r && r.overdue >= 0).sort((a, b) => b.overdue - a.overdue);
+
+  const pending = rows.filter(r => !r.inCooldown);
+  const cooldown = rows.filter(r => r.inCooldown);
+
+  const defaultMsg = (r) => {
+    const prodText = r.topProds.length > 0 ? r.topProds.join(" y ") : "Slaps Lollipops";
+    return `Hola ${r.c.contact || r.c.name},\n\nSoy José de Mega PG Distributions. Han pasado ${r.daysSince} días desde tu último pedido (${fmtD(r.lastO.date)} por ${fmt(r.lastO.total)}) — quería saber cómo vas de inventario.\n\nTenemos stock fresco de ${prodText} listo para entrega en tu zona.\n\n¿Te armo un pedido esta semana?\n\nGracias,\nJosé — (707) 360-7420`;
   };
 
-  if (webOrders.length === 0) {
-    return <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <ST>Pedidos Web</ST>
-        <Btn small onClick={onRefresh} disabled={refreshing}>{refreshing ? "Buscando..." : "🔄 Refrescar"}</Btn>
-      </div>
-      <div style={{ padding: 32, textAlign: "center", background: "#f9f9f9", borderRadius: 8, color: "#888" }}>
-        <div style={{ fontSize: 40, marginBottom: 8 }}>📭</div>
-        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>No hay pedidos nuevos</div>
-        <div style={{ fontSize: 12 }}>Cuando un cliente haga un pedido desde la página web, aparecerá aquí.</div>
-      </div>
-    </div>;
-  }
+  const getMsg = (r) => edits[r.c.id] ?? defaultMsg(r);
+
+  const copyMsg = async (r) => {
+    try {
+      await navigator.clipboard.writeText(getMsg(r));
+      setCopied(r.c.id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch(e) { alert("Copy falló — selecciona el texto manualmente"); }
+  };
+
+  const markSent = (r) => {
+    const updated = { ...reminders, [r.c.id]: { lastSent: new Date().toISOString(), daysOverdue: r.overdue } };
+    setReminders(updated); saveAll("reminders", updated);
+  };
+
+  const resetCooldown = (clientId) => {
+    const updated = { ...reminders };
+    delete updated[clientId];
+    setReminders(updated); saveAll("reminders", updated);
+  };
+
+  const urgColor = (overdue) => overdue >= URGENT_OVERDUE_DAYS ? "#C41E3A" : "#D35400";
 
   return <div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-      <ST>Pedidos Web ({webOrders.length} pendiente{webOrders.length !== 1 ? "s" : ""})</ST>
-      <Btn small onClick={onRefresh} disabled={refreshing}>{refreshing ? "Buscando..." : "🔄 Refrescar"}</Btn>
+    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 4 }}>Recordatorios de reorden</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Clientes con pedidos vencidos según su ciclo promedio de reorden. Edita el mensaje si quieres, cópialo, pégalo en WhatsApp, y marca "Enviado" para evitar repetir en {REMINDER_COOLDOWN_DAYS} días. Clientes con 1 solo pedido se recuerdan a los {DEFAULT_REORDER_CYCLE} días.</div>
     </div>
-
-    {webOrders.map(wo => {
-      const existing = getClientByPhone(wo.phone);
-      const isExpanded = expandedId === wo.id;
-      const createdDate = wo.created_at ? new Date(wo.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
-
-      return <div key={wo.id} style={{ border: "1px solid #ddd", borderLeft: "4px solid #D35400", borderRadius: 8, padding: 16, marginBottom: 12, background: "#fff" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#1A1A1A" }}>{wo.negocio || "Sin nombre de negocio"}</div>
-            <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-              {wo.encargado && <span>👤 {wo.encargado} • </span>}
-              <a href={`tel:${wo.phone}`} style={{ color: "#1A5276", textDecoration: "none" }}>📞 {wo.phone}</a>
-            </div>
-            {wo.direccion && <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>📍 {wo.direccion}</div>}
-            <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>
-              {existing ? <Badge text={`Cliente existente (${existing.tier})`} color="#1B7340" /> : <Badge text="Cliente nuevo" color="#D35400" />}
-              {wo.pago && <span style={{ marginLeft: 6 }}><Badge text={wo.pago} color="#1A5276" /></span>}
-            </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+      <Card title="Pendientes" value={pending.length} color="#D35400" />
+      <Card title={`Urgentes (${URGENT_OVERDUE_DAYS}+ días)`} value={pending.filter(r => r.overdue >= URGENT_OVERDUE_DAYS).length} color="#C41E3A" />
+      <Card title="En cooldown" value={cooldown.length} color="#888" />
+    </div>
+    {pending.length === 0 && cooldown.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay clientes con pedidos vencidos. 🎉</div>}
+    {pending.map(r => {
+      const msg = getMsg(r);
+      return <div key={r.c.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${urgColor(r.overdue)}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.c.name} <Badge text={r.c.tier} color={TIER_CLR[r.c.tier]} /></div>
+            <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.c.contact || "—"} • {r.c.phone || "sin teléfono"} • {r.c.zone || "—"}</div>
+            <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Último pedido: <b>{fmtD(r.lastO.date)}</b> ({fmt(r.lastO.total)}) • Ciclo: <b>{r.cycle}d</b> • {r.orderCount} pedido{r.orderCount !== 1 ? "s" : ""} total</div>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>{fmt(wo.total)}</div>
-            <div style={{ fontSize: 11, color: "#999" }}>{createdDate}</div>
-          </div>
+          <Badge text={`${r.overdue}d vencido`} color={urgColor(r.overdue)} />
         </div>
-
-        <div style={{ background: "#f9f9f9", borderRadius: 6, padding: 10, marginBottom: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>Productos ({wo.items?.length || 0}):</div>
-          {(wo.items || []).map((it, i) => {
-            const p = pF(it.productId);
-            return <div key={i} style={{ fontSize: 13, padding: "3px 0", display: "flex", justifyContent: "space-between" }}>
-              <span>• {p?.name || it.webLabel || it.productId} <span style={{ color: "#888" }}>×{it.qty}</span></span>
-              {p && <span style={{ color: "#666" }}>{fmt(p.price * it.qty)}</span>}
-            </div>;
-          })}
+        <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.c.id]: e.target.value }))} rows={6} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          <Btn small primary onClick={() => copyMsg(r)}>{copied === r.c.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
+          {r.c.phone && <WaBtn phone={r.c.phone} msg={msg} label="Abrir WhatsApp" small />}
+          <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
+          {edits[r.c.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.c.id]; return n; })}>Reset texto</Btn>}
         </div>
-
-        {rejectingId === wo.id ? (
-          <div style={{ background: "#FEF0F0", padding: 10, borderRadius: 6, marginBottom: 8 }}>
-            <input type="text" value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="Razón (ej: sin stock, cliente canceló)"
-              style={{ width: "100%", padding: 8, fontSize: 13, border: "1px solid #ddd", borderRadius: 4, marginBottom: 8, boxSizing: "border-box" }} />
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn small danger onClick={() => { onReject(wo.id, rejectReason); setRejectingId(null); setRejectReason(""); }}>Confirmar rechazo</Btn>
-              <Btn small onClick={() => { setRejectingId(null); setRejectReason(""); }}>Cancelar</Btn>
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <Btn primary onClick={() => onApprove(wo)}>✓ Aprobar pedido</Btn>
-            <Btn small onClick={() => window.open(`tel:${wo.phone}`, "_self")}>📞 Llamar</Btn>
-            <Btn small onClick={() => window.open(`https://wa.me/${(wo.phone || "").replace(/\D/g, "")}`, "_blank")}>💬 WhatsApp</Btn>
-            <Btn small danger onClick={() => setRejectingId(wo.id)}>✗ Rechazar</Btn>
-          </div>
-        )}
       </div>;
     })}
+    {cooldown.length > 0 && <>
+      <ST>En cooldown ({cooldown.length})</ST>
+      {cooldown.map(r => <div key={r.c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 12px", background: "#f8f8f8", borderRadius: 6, marginBottom: 4, fontSize: 12 }}>
+        <div><b>{r.c.name}</b> <span style={{ color: "#999" }}>— enviado hace {r.dsReminder}d, reaparece en {REMINDER_COOLDOWN_DAYS - r.dsReminder}d</span></div>
+        <Btn small onClick={() => resetCooldown(r.c.id)} style={{ fontSize: 10 }}>Reset</Btn>
+      </div>)}
+    </>}
   </div>;
 };
 
 export default function App() {
   const saved = S.load();
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], expenses: [], init: true };
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, init: true };
   if (!saved?.init) S.save(initData);
+  // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
-  if (!initData.expenses) initData.expenses = [];
+  // Migrate: add reminders if missing from old save
+  if (!initData.reminders) initData.reminders = {};
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -846,148 +616,12 @@ export default function App() {
   const [inventory, setInventory] = useState(initData.inventory);
   const [purchases, setPurchases] = useState(initData.purchases);
   const [visits, setVisits] = useState(initData.visits);
-  const [expenses, setExpenses] = useState(initData.expenses);
-  const [webOrders, setWebOrders] = useState([]);
-  const [webOrdersRefreshing, setWebOrdersRefreshing] = useState(false);
+  const [reminders, setReminders] = useState(initData.reminders);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
-  const [syncStatus, setSyncStatus] = useState(cloudEnabled ? "syncing" : "off"); // off | syncing | synced | error
   const stateRef = useRef(initData);
 
-  // Apply data from any source (cloud pull, import, etc.)
-  const applyData = useCallback((data) => {
-    stateRef.current = data;
-    setClients(data.clients || []); setOrders(data.orders || []); setInventory(data.inventory || []); setPurchases(data.purchases || []); setVisits(data.visits || []); setExpenses(data.expenses || []);
-  }, []);
-
-  // Save to localStorage + push to cloud
-  const sv = useCallback((type, data) => {
-    stateRef.current = { ...stateRef.current, [type]: data };
-    S.save({ ...stateRef.current, init: true });
-    setSyncStatus(cloudEnabled ? "synced" : "off");
-  }, []);
-
-  // Pull from cloud on mount — if cloud is newer, use it
-  useEffect(() => {
-    if (!cloudEnabled) return;
-    S.pull().then(cloud => {
-      if (!cloud?.init) { setSyncStatus("synced"); return; }
-      const localTime = new Date(stateRef.current.updated_at || 0).getTime();
-      const cloudTime = new Date(cloud.updated_at || 0).getTime();
-      if (cloudTime > localTime) {
-        applyData(cloud);
-        try { localStorage.setItem("megapg-data", JSON.stringify(cloud)); } catch {}
-      }
-      setSyncStatus("synced");
-    }).catch(() => setSyncStatus("error"));
-    // Also pull web_orders pending list
-    S.pullWebOrders().then(list => setWebOrders(list || []));
-  }, [applyData]);
-
-  // Refresh web orders list manually
-  const refreshWebOrders = async () => {
-    if (!cloudEnabled) return;
-    setWebOrdersRefreshing(true);
-    try { const list = await S.pullWebOrders(); setWebOrders(list || []); }
-    catch {}
-    setWebOrdersRefreshing(false);
-  };
-
-  // Approve a web order → create client if needed, create order, deduct inventory, open receipt
-  const approveWebOrder = async (wo) => {
-    const phoneNorm = (wo.phone || "").replace(/\D/g, "");
-    // Find or create client
-    let client = clients.find(c => (c.phone || "").replace(/\D/g, "") === phoneNorm);
-    let updatedClients = clients;
-    if (!client) {
-      client = {
-        id: uid(),
-        name: wo.negocio || "Cliente sin nombre",
-        contact: wo.encargado || "",
-        phone: wo.phone || "",
-        address: wo.direccion || "",
-        zone: "Other",
-        tier: "Lista",
-        storeType: "Other",
-        notes: `Creado automáticamente desde pedido web (${new Date().toLocaleDateString()})`,
-        created: new Date().toISOString()
-      };
-      updatedClients = [...clients, client];
-      setClients(updatedClients);
-      sv("clients", updatedClients);
-    }
-
-    // Build order items — validate that productIds exist
-    const validItems = (wo.items || []).filter(it => it.productId && pF(it.productId));
-    if (validItems.length === 0) { alert("Este pedido no tiene productos válidos para importar."); return; }
-
-    const disc = TIER_DISC[client.tier] || 0;
-    const orderTotal = validItems.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.price * it.qty * (1 - disc) : 0); }, 0);
-
-    const newOrder = {
-      id: uid(),
-      clientId: client.id,
-      date: new Date().toISOString().slice(0, 10),
-      items: validItems.map(it => ({ productId: it.productId, qty: it.qty })),
-      notes: `Pedido web #${wo.id?.slice(-6) || "—"}${wo.pago ? ` • Pago: ${wo.pago}` : ""}${wo.direccion ? ` • Entrega: ${wo.direccion}` : ""}`,
-      status: "pending",
-      total: orderTotal,
-      discount: disc,
-      webOrderId: wo.id,
-      created: new Date().toISOString()
-    };
-
-    // Deduct inventory
-    const ni = [...inventory];
-    validItems.forEach(it => {
-      const idx = ni.findIndex(inv => inv.productId === it.productId);
-      if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) };
-    });
-
-    // Save order and inventory
-    const updatedOrders = [...orders, newOrder];
-    setOrders(updatedOrders); sv("orders", updatedOrders);
-    setInventory(ni); sv("inventory", ni);
-
-    // Mark web_order as approved in Supabase
-    await S.updateWebOrderStatus(wo.id, "approved");
-
-    // Remove from local list
-    setWebOrders(prev => prev.filter(w => w.id !== wo.id));
-
-    // Open receipt for this order
-    setRo(newOrder);
-    setTab("receipt");
-  };
-
-  // Reject a web order with a reason
-  const rejectWebOrder = async (id, reason) => {
-    await S.updateWebOrderStatus(id, "rejected", { notes: reason || "" });
-    setWebOrders(prev => prev.filter(w => w.id !== id));
-  };
-
-  // Manual sync: pull latest from cloud
-  const manualSync = async () => {
-    if (!cloudEnabled) return;
-    setSyncStatus("syncing");
-    try {
-      // First push local to cloud
-      await S.push({ ...stateRef.current, init: true });
-      // Then pull (in case other device pushed something newer)
-      const cloud = await S.pull();
-      if (cloud?.init) {
-        const localTime = new Date(stateRef.current.updated_at || 0).getTime();
-        const cloudTime = new Date(cloud.updated_at || 0).getTime();
-        if (cloudTime > localTime) {
-          applyData(cloud);
-          try { localStorage.setItem("megapg-data", JSON.stringify(cloud)); } catch {}
-        }
-      }
-      setSyncStatus("synced");
-      // Also refresh web orders
-      refreshWebOrders();
-    } catch { setSyncStatus("error"); }
-  };
+  const sv = useCallback((type, data) => { stateRef.current = { ...stateRef.current, [type]: data }; S.save({ ...stateRef.current, init: true }); }, []);
 
   const saveVisit = (visit) => {
     const isEdit = visits.some(v => v.id === visit.id);
@@ -998,7 +632,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v6" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `MegaPG_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1011,36 +645,43 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], expenses: parsed.expenses || [] };
-        applyData(data); S.save({ ...data, init: true });
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {} };
+        stateRef.current = data; S.save({ ...data, init: true });
+        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders);
         setTab("dashboard");
       } catch {}
     };
     reader.readAsText(file); e.target.value = "";
   };
 
-  const syncColors = { off: "#999", syncing: "#D35400", synced: "#1B7340", error: "#C41E3A" };
-  const syncLabels = { off: "Local", syncing: "Syncing...", synced: "Synced ✓", error: "Sync error" };
+  // Count pending reorder reminders for tab badge
+  const reorderPending = clients.reduce((n, c) => {
+    const co = orders.filter(o => o.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (co.length === 0) return n;
+    const cycle = calcClientCycle(co);
+    const overdue = dSince(co[0].date) - cycle;
+    const lastR = reminders[c.id]?.lastSent;
+    const inCool = lastR && dSince(lastR) < REMINDER_COOLDOWN_DAYS;
+    return (overdue >= 0 && !inCool) ? n + 1 : n;
+  }, 0);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "weborders", l: `📬 Pedidos Web${webOrders.length > 0 ? ` (${webOrders.length})` : ""}`, highlight: webOrders.length > 0 },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "expenses", l: `Expenses (${expenses.length})` },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v6</span>
-        {cloudEnabled && <button onClick={manualSync} disabled={syncStatus === "syncing"} style={{ fontSize: 10, color: syncColors[syncStatus], background: "none", border: `1px solid ${syncColors[syncStatus]}`, borderRadius: 4, padding: "2px 8px", cursor: syncStatus === "syncing" ? "default" : "pointer" }}>{syncLabels[syncStatus]}</button>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>MEGA PG</span><span style={{ fontSize: 13, color: "#888" }}>CRM v5</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], expenses: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); applyData(empty); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
-      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: t.highlight && tab !== t.id ? "2px solid #D35400" : "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : t.highlight ? "#FFF3E0" : "transparent", color: tab === t.id ? "#fff" : t.highlight ? "#D35400" : "#666" }}>{t.l}</button>)}</div></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {} }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
-      {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} expenses={expenses} />}
-      {tab === "weborders" && <WebOrders webOrders={webOrders} clients={clients} onApprove={approveWebOrder} onReject={rejectWebOrder} refreshing={webOrdersRefreshing} onRefresh={refreshWebOrders} />}
+      {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
       {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
+      {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
-      {tab === "expenses" && <Expenses expenses={expenses} setExpenses={setExpenses} saveAll={sv} />}
-      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} expenses={expenses} />}
+      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
       {tab === "receipt" && <Receipt order={ro} clients={clients} />}
       {tab === "field" && <FieldDashboard visits={visits} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
