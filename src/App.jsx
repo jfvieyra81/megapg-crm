@@ -79,6 +79,91 @@ const S = {
   },
 };
 
+// === PUBLIC STORES SYNC (v5.10) — sync clientes a dulcesaborca.com/donde-comprar ===
+const STORE_PHOTOS_BUCKET = "store-photos";
+const PUBLIC_INACTIVE_DAYS = 90;
+
+const uploadStorePhoto = async (file, clientId) => {
+  if (!cloudEnabled || !file) return null;
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const path = `${clientId}-${Date.now()}.${ext || "jpg"}`;
+  try {
+    const resp = await fetch(`${SUPA_URL}/storage/v1/object/${STORE_PHOTOS_BUCKET}/${path}`, {
+      method: "POST",
+      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Content-Type": file.type || "image/jpeg", "x-upsert": "true" },
+      body: file,
+    });
+    if (!resp.ok) { console.error("Upload failed:", await resp.text()); return null; }
+    return `${SUPA_URL}/storage/v1/object/public/${STORE_PHOTOS_BUCKET}/${path}`;
+  } catch(e) { console.error("Upload error:", e); return null; }
+};
+
+const getRecentProducts = (clientId, orders, days = 90) => {
+  const cutoff = Date.now() - days * 86400000;
+  const recent = orders.filter(o => o.clientId === clientId && new Date(o.date).getTime() >= cutoff);
+  const map = {};
+  recent.forEach(o => (o.items || []).forEach(it => {
+    const p = pF(it.productId);
+    if (!p) return;
+    if (!map[p.id] || new Date(o.date) > new Date(map[p.id].lastOrdered)) {
+      map[p.id] = { name: p.name, lastOrdered: o.date };
+    }
+  }));
+  return Object.values(map);
+};
+
+const lastOrderDate = (clientId, orders) => {
+  const co = orders.filter(o => o.clientId === clientId);
+  if (co.length === 0) return null;
+  return co.sort((a, b) => new Date(b.date) - new Date(a.date))[0].date;
+};
+
+const syncClientToPublicStores = async (client, orders) => {
+  if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
+  try {
+    if (!client.showOnWebsite) {
+      const r = await fetch(`${SUPA_URL}/rest/v1/public_stores?id=eq.${client.id}`, {
+        method: "DELETE",
+        headers: SUPA_HEADERS,
+      });
+      return r.ok ? { ok: true, action: "removed" } : { ok: false, error: await r.text() };
+    }
+    const lastDate = lastOrderDate(client.id, orders);
+    const row = {
+      id: client.id,
+      display_name: client.publicDisplayName || client.name,
+      city: client.zone || "",
+      zone: client.zone || "",
+      address: client.address || "",
+      hours: client.publicHours || "",
+      whatsapp: client.phone || "",
+      photo_url: client.publicPhotoUrl || "",
+      recent_products: getRecentProducts(client.id, orders, PUBLIC_INACTIVE_DAYS),
+      last_purchase_date: lastDate ? lastDate.slice(0, 10) : null,
+      updated_at: new Date().toISOString(),
+    };
+    const resp = await fetch(`${SUPA_URL}/rest/v1/public_stores`, {
+      method: "POST",
+      headers: { ...SUPA_HEADERS, "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(row),
+    });
+    if (!resp.ok) { const err = await resp.text(); console.error("Sync failed:", err); return { ok: false, error: err }; }
+    return { ok: true, action: "published" };
+  } catch(e) { console.error("Sync error:", e); return { ok: false, error: e.message }; }
+};
+
+const syncAllPublicStores = async (clients, orders) => {
+  if (!cloudEnabled) return { ok: false, error: "Supabase no configurado", count: 0 };
+  let published = 0, removed = 0, errors = 0;
+  for (const c of clients) {
+    const r = await syncClientToPublicStores(c, orders);
+    if (!r.ok) errors++;
+    else if (r.action === "published") published++;
+    else if (r.action === "removed") removed++;
+  }
+  return { ok: errors === 0, published, removed, errors };
+};
+
 // FIX #4: Calcula semanas reales desde la primera orden en lugar de hardcodear /4
 const calcWeeks = (orders) => {
   if (orders.length === 0) return 1;
@@ -155,25 +240,157 @@ const Dashboard = ({ clients, orders, inventory }) => {
 };
 
 const Clients = ({ clients, setClients, orders, saveAll }) => {
-  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null); const [form, setForm] = useState({ name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "" }); const [search, setSearch] = useState("");
-  const openN = () => { setForm({ name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "" }); setEdit(null); setSf(true); };
-  const openE = (c) => { setForm({ ...c }); setEdit(c.id); setSf(true); };
-  const save = () => { if (!form.name) return; if (edit) { setClients(prev => { const n = prev.map(c => c.id === edit ? { ...c, ...form } : c); saveAll("clients", n); return n; }); } else { setClients(prev => { const n = [...prev, { ...form, id: uid(), created: new Date().toISOString() }]; saveAll("clients", n); return n; }); } setSf(false); };
-  const del = (id) => { if (delRef.current === id) { setClients(prev => { const n = prev.filter(c => c.id !== id); saveAll("clients", n); return n; }); delRef.current = null; setDelC(null); } else { delRef.current = id; setDelC(id); setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelC(null); } }, 3000); } };
+  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
+  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null);
+  const [form, setForm] = useState(emptyForm); const [search, setSearch] = useState("");
+  const [showWebSection, setShowWebSection] = useState(false); const [uploading, setUploading] = useState(false); const [syncMsg, setSyncMsg] = useState(null); const [bulkSyncing, setBulkSyncing] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const openN = () => { setForm(emptyForm); setEdit(null); setShowWebSection(false); setSf(true); };
+  const openE = (c) => { setForm({ ...emptyForm, ...c }); setEdit(c.id); setShowWebSection(!!c.showOnWebsite); setSf(true); };
+
+  const save = async () => {
+    if (!form.name) return;
+    // Si marcó publicar, exigir confirmación de permiso
+    if (form.showOnWebsite && !form.permissionConfirmed && !form.websitePermissionDate) {
+      setSyncMsg({ ok: false, text: "⚠️ Confirma que el cliente dio permiso antes de publicar" });
+      return;
+    }
+    const permDate = form.showOnWebsite && !form.websitePermissionDate ? new Date().toISOString().slice(0, 10) : form.websitePermissionDate;
+    const cleanForm = { ...form, websitePermissionDate: permDate };
+    let savedClient;
+    if (edit) {
+      setClients(prev => { const n = prev.map(c => c.id === edit ? (savedClient = { ...c, ...cleanForm }) : c); saveAll("clients", n); return n; });
+    } else {
+      savedClient = { ...cleanForm, id: uid(), created: new Date().toISOString() };
+      setClients(prev => { const n = [...prev, savedClient]; saveAll("clients", n); return n; });
+    }
+    // Sync a public_stores si está marcado o si era público y se desmarcó
+    if (savedClient && (cleanForm.showOnWebsite || edit)) {
+      const result = await syncClientToPublicStores(savedClient, orders);
+      if (!result.ok && cleanForm.showOnWebsite) {
+        setSyncMsg({ ok: false, text: "⚠️ Cliente guardado pero falló sincronización con sitio web" });
+        return;
+      }
+    }
+    setSf(false); setSyncMsg(null);
+  };
+
+  const del = (id) => {
+    if (delRef.current === id) {
+      const c = clients.find(x => x.id === id);
+      if (c?.showOnWebsite) syncClientToPublicStores({ ...c, showOnWebsite: false }, orders);
+      setClients(prev => { const n = prev.filter(c => c.id !== id); saveAll("clients", n); return n; });
+      delRef.current = null; setDelC(null);
+    } else {
+      delRef.current = id; setDelC(id);
+      setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelC(null); } }, 3000);
+    }
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { setSyncMsg({ ok: false, text: "⚠️ Foto muy grande (máx 5MB)" }); return; }
+    setUploading(true); setSyncMsg(null);
+    const clientId = edit || `temp-${Date.now()}`;
+    const url = await uploadStorePhoto(file, clientId);
+    setUploading(false);
+    if (url) { setForm(p => ({ ...p, publicPhotoUrl: url })); setSyncMsg({ ok: true, text: "✓ Foto subida" }); }
+    else setSyncMsg({ ok: false, text: "⚠️ Error al subir foto" });
+    e.target.value = "";
+  };
+
+  const handleBulkSync = async () => {
+    setBulkSyncing(true);
+    const result = await syncAllPublicStores(clients, orders);
+    setBulkSyncing(false);
+    setSyncMsg({ ok: result.ok, text: result.ok ? `✓ Sincronizado: ${result.published} publicados, ${result.removed} removidos` : `⚠️ ${result.errors} errores durante sync` });
+    setTimeout(() => setSyncMsg(null), 5000);
+  };
+
   const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()));
+
   return <div>
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8 }}><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." style={{ padding: "7px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, flex: 1, maxWidth: 280 }} /><Btn primary onClick={openN}>+ New client</Btn></div>
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." style={{ padding: "7px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, flex: 1, maxWidth: 280 }} />
+      <div style={{ display: "flex", gap: 6 }}>
+        <Btn small onClick={handleBulkSync} disabled={bulkSyncing}>{bulkSyncing ? "Sincronizando..." : "🔄 Sync sitio web"}</Btn>
+        <Btn primary onClick={openN}>+ New client</Btn>
+      </div>
+    </div>
+    {syncMsg && !sf && <div style={{ padding: "8px 12px", marginBottom: 10, background: syncMsg.ok ? "#E8F5E9" : "#FDE8E8", color: syncMsg.ok ? "#1B7340" : "#C41E3A", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{syncMsg.text}</div>}
     {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No clients. Click "+ New client".</p>}
-    {fil.map(c => { const co = orders.filter(o => o.clientId === c.id); const last = co.length > 0 ? co.sort((a, b) => new Date(b.date) - new Date(a.date))[0] : null; const ts = co.reduce((s, o) => s + (o.total || 0), 0); const days = last ? dSince(last.date) : null; const fu = days !== null && days > FOLLOWUP_DAYS;
-      return <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}><span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span><Badge text={c.tier} color={TIER_CLR[c.tier]} />{c.zone && <Badge text={c.zone} color="#6C3483" />}{fu && <Badge text={`${days}d — follow up!`} color="#D35400" />}</div><div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div></div>
+    {fil.map(c => {
+      const co = orders.filter(o => o.clientId === c.id);
+      const last = co.length > 0 ? co.sort((a, b) => new Date(b.date) - new Date(a.date))[0] : null;
+      const ts = co.reduce((s, o) => s + (o.total || 0), 0);
+      const days = last ? dSince(last.date) : null;
+      const fu = days !== null && days > FOLLOWUP_DAYS;
+      const publicInactive = c.showOnWebsite && (days === null || days > PUBLIC_INACTIVE_DAYS);
+      return <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: publicInactive ? "#FFF8E1" : fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
+            <Badge text={c.tier} color={TIER_CLR[c.tier]} />
+            {c.zone && <Badge text={c.zone} color="#6C3483" />}
+            {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
+            {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
+            {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
+          </div>
+          <div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div>
+        </div>
         <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div><div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div></div>
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {c.phone && <WaBtn phone={c.phone} msg={`Hola ${c.contact || c.name}, soy José de Dulce Sabor.\n\n¿Cómo van las ventas de Slaps? ¿Listo para un reorden?\n\nOrdena en línea: https://dulcesaborca.com\n(707) 360-7420`} label="WA" small />}
-          <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn></div></div>; })}
+          <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn>
+        </div>
+      </div>;
+    })}
     {sf && <Modal title={edit ? "Edit client" : "New client"} onClose={() => setSf(false)}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><Inp label="Store name *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Dulceria Mi Carnaval" /><Inp label="Contact" value={form.contact} onChange={v => setForm(p => ({ ...p, contact: v }))} placeholder="Juan Pérez" /><Inp label="Phone" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(408) 555-1234" /><Inp label="Zone" value={form.zone} onChange={v => setForm(p => ({ ...p, zone: v }))} options={ZONES} /><Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} /><Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" /></div>
-      <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea /><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => setSf(false)}>Cancel</Btn><Btn primary onClick={save}>{edit ? "Update" : "Add"}</Btn></div></Modal>}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+        <Inp label="Store name *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Dulceria Mi Carnaval" />
+        <Inp label="Contact" value={form.contact} onChange={v => setForm(p => ({ ...p, contact: v }))} placeholder="Juan Pérez" />
+        <Inp label="Phone" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(408) 555-1234" />
+        <Inp label="Zone" value={form.zone} onChange={v => setForm(p => ({ ...p, zone: v }))} options={ZONES} />
+        <Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} />
+        <Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" />
+      </div>
+      <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
+
+      {/* === SECCIÓN PUBLICAR EN SITIO WEB (v5.10) === */}
+      <div style={{ marginTop: 12, border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
+        <button onClick={() => setShowWebSection(s => !s)} style={{ width: "100%", padding: "10px 14px", background: form.showOnWebsite ? "#E3F2FD" : "#F8F8F8", border: "none", textAlign: "left", fontSize: 13, fontWeight: 700, color: "#1A5276", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>🌐 Publicar en dulcesaborca.com {form.showOnWebsite && "✓"}</span>
+          <span style={{ fontSize: 16 }}>{showWebSection ? "▾" : "▸"}</span>
+        </button>
+        {showWebSection && <div style={{ padding: "12px 14px", background: "#fff" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <input type="checkbox" checked={!!form.showOnWebsite} onChange={e => setForm(p => ({ ...p, showOnWebsite: e.target.checked }))} style={{ width: 18, height: 18 }} />
+            Mostrar esta tienda en /donde-comprar
+          </label>
+          {form.showOnWebsite && <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+              <Inp label="Nombre comercial (opcional)" value={form.publicDisplayName} onChange={v => setForm(p => ({ ...p, publicDisplayName: v }))} placeholder={form.name || "Si distinto al legal"} />
+              <Inp label="Horario público" value={form.publicHours} onChange={v => setForm(p => ({ ...p, publicHours: v }))} placeholder="Lun-Sáb 9am-8pm" />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 5 }}>Foto del local</label>
+              {form.publicPhotoUrl && <div style={{ marginBottom: 6 }}><img src={form.publicPhotoUrl} alt="Local" style={{ maxWidth: 200, maxHeight: 120, borderRadius: 6, border: "1px solid #ddd" }} /></div>}
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: "none" }} />
+              <Btn small onClick={() => fileInputRef.current?.click()} disabled={uploading}>{uploading ? "Subiendo..." : form.publicPhotoUrl ? "📷 Cambiar foto" : "📷 Subir foto"}</Btn>
+              {form.publicPhotoUrl && <Btn small onClick={() => setForm(p => ({ ...p, publicPhotoUrl: "" }))} style={{ marginLeft: 6 }}>Quitar</Btn>}
+            </div>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, padding: 10, background: "#FFF8E1", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
+              <input type="checkbox" checked={!!form.permissionConfirmed} onChange={e => setForm(p => ({ ...p, permissionConfirmed: e.target.checked }))} style={{ width: 16, height: 16, marginTop: 2 }} />
+              <span><b>Confirmo</b> que el cliente me dio permiso para publicar su negocio en dulcesaborca.com (foto, dirección, horario y WhatsApp). {form.websitePermissionDate && <span style={{ color: "#777" }}>— Permiso desde: {fmtD(form.websitePermissionDate)}</span>}</span>
+            </label>
+          </>}
+          {syncMsg && <div style={{ padding: "6px 10px", marginTop: 10, background: syncMsg.ok ? "#E8F5E9" : "#FDE8E8", color: syncMsg.ok ? "#1B7340" : "#C41E3A", borderRadius: 6, fontSize: 12 }}>{syncMsg.text}</div>}
+        </div>}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => { setSf(false); setSyncMsg(null); }}>Cancel</Btn><Btn primary onClick={save}>{edit ? "Update" : "Add"}</Btn></div>
+    </Modal>}
   </div>;
 };
 
@@ -1268,7 +1485,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.9" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.10" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1450,7 +1667,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.9</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.10</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
