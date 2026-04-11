@@ -631,6 +631,8 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
 const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
 
 const FieldDashboard = ({ visits }) => {
+  const byStore = {}; visits.forEach(v=>{ if(!byStore[v.storeName] || new Date(v.date)>new Date(byStore[v.storeName].date)) byStore[v.storeName]=v; });
+  const retratos = Object.values(byStore).filter(v=>v.portrait && Object.keys(v.portrait).length);
   const total = visits.length;
   const withBrand = visits.filter(v => v.brand && v.brand !== "Neither/Unknown");
   const megaPG = visits.filter(v => v.brand === "Mega PG" || v.brand === "Both").length;
@@ -656,14 +658,30 @@ const FieldDashboard = ({ visits }) => {
 };
 
 const VisitForm = ({ onSave, onClose, editVisit }) => {
-  const [f, setF] = useState(editVisit || { storeName: "", address: "", phone: "", contact: "", zone: "", storeType: "", date: new Date().toISOString().slice(0, 10), brand: "", productsSeen: [], supplier: "", publicPrice: "", interest: "", painPoints: "", leftSamples: false, samplesQty: "", notes: "", competitorProducts: "", footTraffic: "" });
+  const [f, setF] = useState(editVisit || { storeName: "", address: "", phone: "", contact: "", zone: "", storeType: "", date: new Date().toISOString().slice(0, 10), brand: "", productsSeen: [], supplier: "", publicPrice: "", interest: "", painPoints: "", leftSamples: false, samplesQty: "", notes: "", competitorProducts: "", footTraffic: "", todayQuote: "", todayObserved: "", nextMove: "", portrait: {} });
+  const [pOpen, setPOpen] = useState({persona:false,negocio:false,batalla:false,compra:false,futuro:false});
+  const pt = f.portrait ?? {};
+  const uP = (k,v) => setF({...f, portrait: {...pt, [k]: v}});
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const toggleProd = (prod) => setF(p => ({ ...p, productsSeen: p.productsSeen.includes(prod) ? p.productsSeen.filter(x => x !== prod) : [...p.productsSeen, prod] }));
-  const doSave = () => { if (!f.storeName) return; onSave(editVisit ? { ...editVisit, ...f } : { ...f, id: uid(), created: new Date().toISOString() }); };
+  const doSave = () => { if (!f.storeName || !f.todayQuote || !f.todayObserved || !f.nextMove) { alert("Faltan: frase del cliente, observación y próximo movimiento"); return; } onSave(editVisit ? { ...editVisit, ...f } : { ...f, id: uid(), created: new Date().toISOString() }); };
   return <Modal title={editVisit ? "Edit visit" : "New field visit"} onClose={onClose} wide>
     <ST>Store info</ST>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
       <Inp label="Store name *" value={f.storeName} onChange={v => u("storeName", v)} placeholder="Dulcería Las Tapatías" />
+      <div style={{background:"#FFF9E6",padding:8,border:"1px solid #F1C40F",borderRadius:6,marginBottom:8}}>
+        <label style={{fontSize:11,fontWeight:600}}>Frase textual del cliente hoy *</label>
+        <textarea value={f.todayQuote||""} onChange={e=>u("todayQuote",e.target.value)} style={{width:"100%",minHeight:50,fontSize:12}} />
+        <label style={{fontSize:11,fontWeight:600}}>Lo que observé hoy *</label>
+        <textarea value={f.todayObserved||""} onChange={e=>u("todayObserved",e.target.value)} style={{width:"100%",minHeight:50,fontSize:12}} />
+        <Inp label="Próximo movimiento *" value={f.nextMove||""} onChange={v=>u("nextMove",v)} />
+      </div>
+      {["persona","negocio","batalla","compra","futuro"].map(k=>(
+        <div key={k} style={{border:"1px solid #ddd",borderRadius:6,marginBottom:6}}>
+          <div onClick={()=>setPOpen({...pOpen,[k]:!pOpen[k]})} style={{padding:8,cursor:"pointer",background:"#f5f5f5",fontWeight:600,fontSize:12,textTransform:"capitalize"}}>{pOpen[k]?"▼":"▶"} {k}</div>
+          {pOpen[k] && <div style={{padding:8}}><textarea value={pt[k]||""} onChange={e=>uP(k,e.target.value)} style={{width:"100%",minHeight:60,fontSize:12}} placeholder={`Retrato: ${k}`} /></div>}
+        </div>
+      ))}
       <Inp label="Contact" value={f.contact} onChange={v => u("contact", v)} placeholder="María González" />
       <Inp label="Address" value={f.address} onChange={v => u("address", v)} placeholder="1630 Sebastopol Rd" />
       <Inp label="Phone" value={f.phone} onChange={v => u("phone", v)} placeholder="(707) 536-9543" />
