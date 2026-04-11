@@ -458,6 +458,23 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
         </div>; })}
       <Btn small onClick={addL} style={{ marginTop: 8 }}>+ Add product</Btn>
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea style={{ marginTop: 10 }} />
+      {(() => {
+  const slapBoxes = form.items.reduce((s, it) => { const p = pF(it.productId); return s + (isSlap40(p) ? it.qty : 0); }, 0);
+  const auto = slapBoxRange(slapBoxes);
+  return (
+    <div style={{ marginTop: 10, padding: "8px 12px", background: "#FFF8E7", borderRadius: 6, fontSize: 12 }}>
+      <label style={{ fontWeight: 600, color: "#555" }}>Descuento 1ª orden (Slaps): </label>
+      <select value={form.foDisc || ""} onChange={e => setForm(p => ({ ...p, foDisc: e.target.value || null }))} style={{ padding: "4px 6px", marginLeft: 4 }}>
+        <option value="">Ninguno</option>
+        <option value="1-4">1–4 cajas — $40.00</option>
+        <option value="5-9">5–9 cajas — $38.75</option>
+        <option value="10-19">10–19 cajas — $37.50</option>
+        <option value="20+">20+ cajas — $35.00</option>
+      </select>
+      {auto && form.foDisc !== auto && <button type="button" onClick={() => setForm(p => ({ ...p, foDisc: auto }))} style={{ marginLeft: 8, fontSize: 11, padding: "3px 8px", border: "1px solid #D35400", background: "#fff", color: "#D35400", borderRadius: 4, cursor: "pointer" }}>Auto: {auto}</button>}
+    </div>
+  );
+})()}
       {getStockWarnings().length > 0 && <div style={{ background: "#FDF2E9", padding: "8px 12px", borderRadius: 6, marginTop: 8, fontSize: 12, color: "#D35400", borderLeft: "3px solid #D35400" }}>
         <b>Stock warnings:</b> {getStockWarnings().join("; ")}
         <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>You can still create the order — inventory will go to 0.</div>
