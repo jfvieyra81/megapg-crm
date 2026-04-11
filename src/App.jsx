@@ -46,6 +46,10 @@ const INTEREST_LVL = ["Very interested", "Somewhat interested", "Not interested"
 const SUPPLIERS = ["Pigüi USA (LA)", "Local distributor", "Travels to buy", "Online/Walmart/Amazon", "Unknown", "None (no Slaps)"];
 const PRODUCTS_SEEN = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/Cachetadas", "Cache Colors", "Slim Licks", "Bibi Licks", "Piguileta", "Mega Huevón", "Flamkiyos", "Mordidilla", "Don Cuco", "Other Pigüi", "None"];
 const TIER_DISC = { Lista: 0, Bronce: 0.03125, Plata: 0.0625, Oro: 0.125 };
+const FO_SLAP_PRICE = { "1-4": 40, "5-9": 38.75, "10-19": 37.50, "20+": 35 };
+const isSlap40 = (p) => p && p.id && p.id.startsWith("slaps-") && p.price === 40;
+const slapBoxRange = (n) => n <= 0 ? null : n <= 4 ? "1-4" : n <= 9 ? "5-9" : n <= 19 ? "10-19" : "20+";
+const foPrice = (p, foDisc) => (foDisc && isSlap40(p)) ? FO_SLAP_PRICE[foDisc] : p.price;
 const TIER_CLR = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
 const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
 const LOW = 5;
@@ -401,7 +405,7 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
   const remL = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
   const upL = (i, f, v) => setForm(p => { const items = [...p.items]; items[i] = { ...items[i], [f]: f === "qty" ? Math.max(1, parseInt(v) || 1) : v }; return { ...p, items }; });
   const cl = clients.find(c => c.id === form.clientId); const disc = cl ? TIER_DISC[cl.tier] || 0 : 0;
-  const calcT = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.price * it.qty * (1 - disc) : 0); }, 0);
+  const calcT = () => form.items.reduce((s, it) => { const p = pF(it.productId); if (!p) return s; if (form.foDisc && isSlap40(p)) return s + FO_SLAP_PRICE[form.foDisc] * it.qty; return s + p.price * it.qty * (1 - disc); }, 0);
   const calcC = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.cost * it.qty : 0); }, 0);
 
   // FIX #5: Checar stock antes de guardar orden
@@ -421,7 +425,7 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
   const saveO = () => { if (!form.clientId || form.items.every(it => !it.productId)) return;
     const warnings = getStockWarnings();
     if (warnings.length > 0 && !stockAck) { setStockAck(true); return; }
-    const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
+    const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, foDisc: form.foDisc || null, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
   const upSt = (id, st) => setOrders(prev => { const n = prev.map(o => o.id === id ? { ...o, status: st } : o); saveAll("orders", n); return n; });
   const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
   const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
@@ -631,19 +635,16 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
 const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
 
 const FieldDashboard = ({ visits }) => {
-  const byStore = {};
-  visits.forEach(v => { if (!byStore[v.storeName] || new Date(v.date) > new Date(byStore[v.storeName].date)) byStore[v.storeName] = v; });
-  const retratos = Object.values(byStore).filter(v => v.portrait && Object.keys(v.portrait).length > 0);
   const total = visits.length;
+  const withBrand = visits.filter(v => v.brand && v.brand !== "Neither/Unknown");
   const megaPG = visits.filter(v => v.brand === "Mega PG" || v.brand === "Both").length;
   const piguiUSA = visits.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length;
   const interested = visits.filter(v => v.interest === "Very interested" || v.interest === "Somewhat interested").length;
   const prices = visits.filter(v => v.publicPrice > 0).map(v => Number(v.publicPrice));
   const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
   const zones = ZONES.filter(z => z !== "Other").map(z => { const zv = visits.filter(v => v.zone === z); return { zone: z, total: zv.length, mega: zv.filter(v => v.brand === "Mega PG" || v.brand === "Both").length, pigui: zv.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length }; }).filter(z => z.total > 0);
-  const supplierCounts = {};
-  visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
-  const LBL = { persona: "Persona", negocio: "Negocio", batalla: "Batalla", compra: "Compra", futuro: "Futuro" };
+  const supplierCounts = {}; visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
+
   return <div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
       <Card title="Stores visited" value={total} color="#1A5276" />
@@ -652,7 +653,6 @@ const FieldDashboard = ({ visits }) => {
       <Card title="Interested" value={interested} sub={total > 0 ? `${Math.round(interested / total * 100)}%` : ""} color="#D35400" />
     </div>
     {avgPrice > 0 && <div style={{ fontSize: 13, color: "#555", marginBottom: 12 }}>Avg public price: <b>{fmt(avgPrice)}</b>/bag across {prices.length} stores</div>}
-    {retratos.length > 0 && <><ST>Retratos de clientes</ST>{retratos.map(v => <div key={v.storeName} style={{ border: "1px solid #ddd", borderRadius: 6, padding: 10, marginBottom: 8, background: "#fafafa" }}><div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{v.storeName} <span style={{ color: "#999", fontWeight: 400, fontSize: 11 }}>({v.date})</span></div>{v.todayQuote && <div style={{ fontSize: 12, fontStyle: "italic", color: "#666", marginBottom: 4 }}>"{v.todayQuote}"</div>}{["persona","negocio","batalla","compra","futuro"].map(k => v.portrait?.[k] && <div key={k} style={{ fontSize: 11, marginBottom: 2 }}><b>{LBL[k]}:</b> {v.portrait[k]}</div>)}</div>)}</>}
     {zones.length > 0 && <><ST>Zone penetration</ST>{zones.map(z => <div key={z.zone} style={{ marginBottom: 8 }}><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{z.zone} <span style={{ color: "#999", fontWeight: 400 }}>({z.total} stores)</span></div><div style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: "#f0f0f0" }}>{z.mega > 0 && <div style={{ width: `${z.mega / z.total * 100}%`, background: "#1B7340" }} title={`Mega PG: ${z.mega}`} />}{z.pigui > 0 && <div style={{ width: `${z.pigui / z.total * 100}%`, background: "#C41E3A" }} title={`Pigüi USA: ${z.pigui}`} />}</div><div style={{ fontSize: 10, color: "#999", marginTop: 1 }}><span style={{ color: "#1B7340" }}>■ Mega PG: {z.mega}</span> <span style={{ color: "#C41E3A", marginLeft: 8 }}>■ Pigüi USA: {z.pigui}</span></div></div>)}</>}
     {Object.keys(supplierCounts).length > 0 && <><ST>Supplier channels</ST>{Object.entries(supplierCounts).sort((a, b) => b[1] - a[1]).map(([sup, cnt]) => <div key={sup} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{sup}</span><b>{cnt}</b></div>)}</>}
     {total === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No field visits yet. Go to "Visits" tab to start capturing data.</div>}
@@ -660,30 +660,14 @@ const FieldDashboard = ({ visits }) => {
 };
 
 const VisitForm = ({ onSave, onClose, editVisit }) => {
-  const [f, setF] = useState(editVisit || { storeName: "", address: "", phone: "", contact: "", zone: "", storeType: "", date: new Date().toISOString().slice(0, 10), brand: "", productsSeen: [], supplier: "", publicPrice: "", interest: "", painPoints: "", leftSamples: false, samplesQty: "", notes: "", competitorProducts: "", footTraffic: "", todayQuote: "", todayObserved: "", nextMove: "", portrait: {} });
-  const [pOpen, setPOpen] = useState({persona:false,negocio:false,batalla:false,compra:false,futuro:false});
-  const pt = f.portrait ?? {};
-  const uP = (k,v) => setF({...f, portrait: {...pt, [k]: v}});
+  const [f, setF] = useState(editVisit || { storeName: "", address: "", phone: "", contact: "", zone: "", storeType: "", date: new Date().toISOString().slice(0, 10), brand: "", productsSeen: [], supplier: "", publicPrice: "", interest: "", painPoints: "", leftSamples: false, samplesQty: "", notes: "", competitorProducts: "", footTraffic: "" });
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const toggleProd = (prod) => setF(p => ({ ...p, productsSeen: p.productsSeen.includes(prod) ? p.productsSeen.filter(x => x !== prod) : [...p.productsSeen, prod] }));
-  const doSave = () => { if (!f.storeName || !f.todayQuote || !f.todayObserved || !f.nextMove) { alert("Faltan: frase del cliente, observación y próximo movimiento"); return; } onSave(editVisit ? { ...editVisit, ...f } : { ...f, id: uid(), created: new Date().toISOString() }); };
+  const doSave = () => { if (!f.storeName) return; onSave(editVisit ? { ...editVisit, ...f } : { ...f, id: uid(), created: new Date().toISOString() }); };
   return <Modal title={editVisit ? "Edit visit" : "New field visit"} onClose={onClose} wide>
     <ST>Store info</ST>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
       <Inp label="Store name *" value={f.storeName} onChange={v => u("storeName", v)} placeholder="Dulcería Las Tapatías" />
-      <div style={{background:"#FFF9E6",padding:8,border:"1px solid #F1C40F",borderRadius:6,marginBottom:8}}>
-        <label style={{fontSize:11,fontWeight:600}}>Frase textual del cliente hoy *</label>
-        <textarea value={f.todayQuote||""} onChange={e=>u("todayQuote",e.target.value)} style={{width:"100%",minHeight:50,fontSize:12}} />
-        <label style={{fontSize:11,fontWeight:600}}>Lo que observé hoy *</label>
-        <textarea value={f.todayObserved||""} onChange={e=>u("todayObserved",e.target.value)} style={{width:"100%",minHeight:50,fontSize:12}} />
-        <Inp label="Próximo movimiento *" value={f.nextMove||""} onChange={v=>u("nextMove",v)} />
-      </div>
-      {["persona","negocio","batalla","compra","futuro"].map(k=>(
-        <div key={k} style={{border:"1px solid #ddd",borderRadius:6,marginBottom:6}}>
-          <div onClick={()=>setPOpen({...pOpen,[k]:!pOpen[k]})} style={{padding:8,cursor:"pointer",background:"#f5f5f5",fontWeight:600,fontSize:12,textTransform:"capitalize"}}>{pOpen[k]?"▼":"▶"} {k}</div>
-          {pOpen[k] && <div style={{padding:8}}><textarea value={pt[k]||""} onChange={e=>uP(k,e.target.value)} style={{width:"100%",minHeight:60,fontSize:12}} placeholder={`Retrato: ${k}`} /></div>}
-        </div>
-      ))}
       <Inp label="Contact" value={f.contact} onChange={v => u("contact", v)} placeholder="María González" />
       <Inp label="Address" value={f.address} onChange={v => u("address", v)} placeholder="1630 Sebastopol Rd" />
       <Inp label="Phone" value={f.phone} onChange={v => u("phone", v)} placeholder="(707) 536-9543" />
