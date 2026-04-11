@@ -513,7 +513,7 @@ const Reports = ({ orders, clients, purchases }) => {
   // FIX #4: Usar semanas reales
   const weeks = calcWeeks(orders);
   const md = {}; orders.forEach(o => { const m = o.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; md[m].rev += o.total || 0; md[m].cost += o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); md[m].cases += o.items.reduce((a, it) => a + it.qty, 0); md[m].orders++; });
-  const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => { const base = (o.foDisc && p.id === "slaps") ? o.foDisc.price : p.price * (1 - (o.discount || 0)); return a + base * it.qty; }, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
+  const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => { const base = (o.foDisc && p.id === "Slaps") ? o.foDisc.price : p.price * (1 - (o.discount || 0)); return a + base * it.qty; }, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
   const tR = orders.reduce((s, o) => s + (o.total || 0), 0); const tC = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
   return <div>
     <ST>P&L summary <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)} week span)</span></ST>
@@ -1282,6 +1282,7 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
       const woPhone = normPhone(wo.phone);
       let client = clients.find(c => normPhone(c.phone) === woPhone);
       let updatedClients = clients;
+      const isNewClient = !client;
       if (!client) {
         client = {
           id: uid(),
@@ -1315,10 +1316,24 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
         }
       }
 
-      // 3. Calculate totals with client tier discount
+      // 3. Calculate totals with client tier discount + 1ª orden override on Slaps
       const disc = TIER_DISC[client.tier] || 0;
-      const sub = validItems.reduce((s, it) => s + (pF(it.productId)?.price || 0) * it.qty, 0);
-      const total = sub * (1 - disc);
+      // First-order discount: only for brand-new clients with no prior orders, applies to Slaps qty tiers
+      const hasPriorOrders = orders.some(o => o.clientId === client.id);
+      const slapsItem = validItems.find(it => it.productId === "Slaps");
+      const slapsQty = slapsItem ? Number(slapsItem.qty) : 0;
+      let foDisc = null;
+      if (isNewClient && !hasPriorOrders && slapsQty >= 5) {
+        if (slapsQty >= 20) foDisc = { tier: "20+", price: 35 };
+        else if (slapsQty >= 10) foDisc = { tier: "10-19", price: 37.50 };
+        else foDisc = { tier: "5-9", price: 38.75 };
+      }
+      const sub = validItems.reduce((s, it) => {
+        const p = pF(it.productId);
+        if (foDisc && it.productId === "Slaps") return s + foDisc.price * it.qty;
+        return s + (p?.price || 0) * it.qty * (1 - disc);
+      }, 0);
+      const total = sub;
 
       // 4. Create order
       const newOrder = {
@@ -1326,7 +1341,8 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
         clientId: client.id,
         date: new Date().toISOString().slice(0, 10),
         items: validItems.map(it => ({ productId: it.productId, qty: Number(it.qty) })),
-        discount: disc,
+        discount: foDisc ? 0 : disc,
+        foDisc,
         total: parseFloat(total.toFixed(2)),
         status: "pending",
         notes: `Importado de pedido web ${wo.id}${wo.pago ? ` • Pago: ${wo.pago}` : ""}`,
