@@ -631,18 +631,19 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
 const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
 
 const FieldDashboard = ({ visits }) => {
-  const byStore = {}; visits.forEach(v=>{ if(!byStore[v.storeName] || new Date(v.date)>new Date(byStore[v.storeName].date)) byStore[v.storeName]=v; });
-  const retratos = Object.values(byStore).filter(v=>v.portrait && Object.keys(v.portrait).length);
+  const byStore = {};
+  visits.forEach(v => { if (!byStore[v.storeName] || new Date(v.date) > new Date(byStore[v.storeName].date)) byStore[v.storeName] = v; });
+  const retratos = Object.values(byStore).filter(v => v.portrait && Object.keys(v.portrait).length > 0);
   const total = visits.length;
-  const withBrand = visits.filter(v => v.brand && v.brand !== "Neither/Unknown");
   const megaPG = visits.filter(v => v.brand === "Mega PG" || v.brand === "Both").length;
   const piguiUSA = visits.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length;
   const interested = visits.filter(v => v.interest === "Very interested" || v.interest === "Somewhat interested").length;
   const prices = visits.filter(v => v.publicPrice > 0).map(v => Number(v.publicPrice));
   const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
   const zones = ZONES.filter(z => z !== "Other").map(z => { const zv = visits.filter(v => v.zone === z); return { zone: z, total: zv.length, mega: zv.filter(v => v.brand === "Mega PG" || v.brand === "Both").length, pigui: zv.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length }; }).filter(z => z.total > 0);
-  const supplierCounts = {}; visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
-
+  const supplierCounts = {};
+  visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
+  const LBL = { persona: "Persona", negocio: "Negocio", batalla: "Batalla", compra: "Compra", futuro: "Futuro" };
   return <div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
       <Card title="Stores visited" value={total} color="#1A5276" />
@@ -651,6 +652,7 @@ const FieldDashboard = ({ visits }) => {
       <Card title="Interested" value={interested} sub={total > 0 ? `${Math.round(interested / total * 100)}%` : ""} color="#D35400" />
     </div>
     {avgPrice > 0 && <div style={{ fontSize: 13, color: "#555", marginBottom: 12 }}>Avg public price: <b>{fmt(avgPrice)}</b>/bag across {prices.length} stores</div>}
+    {retratos.length > 0 && <><ST>Retratos de clientes</ST>{retratos.map(v => <div key={v.storeName} style={{ border: "1px solid #ddd", borderRadius: 6, padding: 10, marginBottom: 8, background: "#fafafa" }}><div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{v.storeName} <span style={{ color: "#999", fontWeight: 400, fontSize: 11 }}>({v.date})</span></div>{v.todayQuote && <div style={{ fontSize: 12, fontStyle: "italic", color: "#666", marginBottom: 4 }}>"{v.todayQuote}"</div>}{["persona","negocio","batalla","compra","futuro"].map(k => v.portrait?.[k] && <div key={k} style={{ fontSize: 11, marginBottom: 2 }}><b>{LBL[k]}:</b> {v.portrait[k]}</div>)}</div>)}</>}
     {zones.length > 0 && <><ST>Zone penetration</ST>{zones.map(z => <div key={z.zone} style={{ marginBottom: 8 }}><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{z.zone} <span style={{ color: "#999", fontWeight: 400 }}>({z.total} stores)</span></div><div style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: "#f0f0f0" }}>{z.mega > 0 && <div style={{ width: `${z.mega / z.total * 100}%`, background: "#1B7340" }} title={`Mega PG: ${z.mega}`} />}{z.pigui > 0 && <div style={{ width: `${z.pigui / z.total * 100}%`, background: "#C41E3A" }} title={`Pigüi USA: ${z.pigui}`} />}</div><div style={{ fontSize: 10, color: "#999", marginTop: 1 }}><span style={{ color: "#1B7340" }}>■ Mega PG: {z.mega}</span> <span style={{ color: "#C41E3A", marginLeft: 8 }}>■ Pigüi USA: {z.pigui}</span></div></div>)}</>}
     {Object.keys(supplierCounts).length > 0 && <><ST>Supplier channels</ST>{Object.entries(supplierCounts).sort((a, b) => b[1] - a[1]).map(([sup, cnt]) => <div key={sup} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{sup}</span><b>{cnt}</b></div>)}</>}
     {total === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No field visits yet. Go to "Visits" tab to start capturing data.</div>}
