@@ -48,6 +48,11 @@ const PRODUCTS_SEEN = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/
 const TIER_DISC = { Lista: 0, Bronce: 0.03125, Plata: 0.0625, Oro: 0.125 };
 const TIER_CLR = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
 const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
+// PAYMENT TERMS — v5.11
+const PAYMENT_TERMS = ["Contado", "Crédito 7 días", "Crédito 15 días", "Crédito 30 días"];
+const TERM_DAYS = { "Contado": 0, "Crédito 7 días": 7, "Crédito 15 días": 15, "Crédito 30 días": 30 };
+const TERM_CLR = { "Contado": "#1B7340", "Crédito 7 días": "#1A5276", "Crédito 15 días": "#D35400", "Crédito 30 días": "#6C3483" };
+const SCORE_CLR = (s) => s >= 90 ? "#1B7340" : s >= 70 ? "#D35400" : s >= 50 ? "#C41E3A" : "#888";
 const LOW = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
 const FOLLOWUP_DAYS = 21;
@@ -188,6 +193,48 @@ const calcClientCycle = (clientOrders) => {
   return Math.max(7, Math.round(avg));
 };
 
+// PAYMENT SCORE — v5.11 — evalúa puntualidad del cliente (0-100)
+// Lógica: empieza en 100. Por cada orden atrasada vs. sus términos, baja puntos según los días de retraso.
+// Sin historial suficiente → null (no hay datos para juzgar)
+const calcPaymentScore = (client, clientOrders) => {
+  const term = TERM_DAYS[client?.paymentTerms] ?? 0;
+  // Solo contamos órdenes que ya tienen resolución (pagadas o claramente atrasadas)
+  const evaluable = clientOrders.filter(o => o.status === "paid" || o.status === "delivered");
+  if (evaluable.length < 2) return null; // Muy pocos datos
+  let score = 100;
+  let latePenalty = 0;
+  evaluable.forEach(o => {
+    if (o.status === "paid" && o.paidDate) {
+      const delivered = o.deliveredDate || o.date;
+      const daysToPay = Math.max(0, (new Date(o.paidDate) - new Date(delivered)) / 86400000);
+      const overdue = Math.max(0, daysToPay - term);
+      if (overdue > 0) latePenalty += Math.min(15, overdue); // máx 15 pts por orden tardía
+    } else if (o.status === "delivered") {
+      // Entregada pero no pagada → revisar si ya venció
+      const delivered = o.deliveredDate || o.date;
+      const daysSinceDelivery = dSince(delivered);
+      const overdue = Math.max(0, daysSinceDelivery - term);
+      if (overdue > 0) latePenalty += Math.min(20, overdue); // actualmente atrasada = más castigo
+    }
+  });
+  score = Math.max(0, Math.round(score - latePenalty / evaluable.length * 3));
+  return Math.min(100, score);
+};
+
+// DUE DATE — fecha en que se debe pagar una orden según los términos del cliente
+const orderDueDate = (order, client) => {
+  const term = TERM_DAYS[client?.paymentTerms] ?? 0;
+  const baseDate = order.deliveredDate || order.date;
+  const due = new Date(baseDate);
+  due.setDate(due.getDate() + term);
+  return due;
+};
+
+const daysUntilDue = (order, client) => {
+  const due = orderDueDate(order, client);
+  return Math.floor((due.getTime() - Date.now()) / 86400000);
+};
+
 // WhatsApp helpers
 const cleanPhone = (ph) => { if (!ph) return ""; return ph.replace(/[^0-9]/g, "").replace(/^1?(\d{10})$/, "1$1"); };
 const waLink = (phone, msg) => `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(msg)}`;
@@ -240,7 +287,7 @@ const Dashboard = ({ clients, orders, inventory }) => {
 };
 
 const Clients = ({ clients, setClients, orders, saveAll }) => {
-  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
+  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", ownerGroup: "", paymentTerms: "Contado", creditLimit: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
   const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null);
   const [form, setForm] = useState(emptyForm); const [search, setSearch] = useState("");
   const [showWebSection, setShowWebSection] = useState(false); const [uploading, setUploading] = useState(false); const [syncMsg, setSyncMsg] = useState(null); const [bulkSyncing, setBulkSyncing] = useState(false);
@@ -308,7 +355,15 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
     setTimeout(() => setSyncMsg(null), 5000);
   };
 
-  const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()));
+  const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()) || c.ownerGroup?.toLowerCase().includes(search.toLowerCase()));
+
+  // Agrupar por ownerGroup para mostrar tarjeta resumen arriba del grupo
+  const groupsSeen = new Set();
+  const filWithGroupMarker = fil.map(c => {
+    const isFirstOfGroup = c.ownerGroup && !groupsSeen.has(c.ownerGroup);
+    if (c.ownerGroup) groupsSeen.add(c.ownerGroup);
+    return { ...c, _isFirstOfGroup: isFirstOfGroup };
+  });
 
   return <div>
     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
@@ -320,29 +375,42 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
     </div>
     {syncMsg && !sf && <div style={{ padding: "8px 12px", marginBottom: 10, background: syncMsg.ok ? "#E8F5E9" : "#FDE8E8", color: syncMsg.ok ? "#1B7340" : "#C41E3A", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{syncMsg.text}</div>}
     {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No clients. Click "+ New client".</p>}
-    {fil.map(c => {
+    {filWithGroupMarker.map(c => {
       const co = orders.filter(o => o.clientId === c.id);
       const last = co.length > 0 ? co.sort((a, b) => new Date(b.date) - new Date(a.date))[0] : null;
       const ts = co.reduce((s, o) => s + (o.total || 0), 0);
       const days = last ? dSince(last.date) : null;
       const fu = days !== null && days > FOLLOWUP_DAYS;
       const publicInactive = c.showOnWebsite && (days === null || days > PUBLIC_INACTIVE_DAYS);
-      return <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: publicInactive ? "#FFF8E1" : fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
-            <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
-            <Badge text={c.tier} color={TIER_CLR[c.tier]} />
-            {c.zone && <Badge text={c.zone} color="#6C3483" />}
-            {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
-            {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
-            {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
+      const score = calcPaymentScore(c, co);
+      const owedNow = co.filter(o => o.status !== "paid").reduce((s, o) => s + (o.total || 0), 0);
+      // Indicador de grupo (misma dueña)
+      const groupSiblings = c.ownerGroup ? clients.filter(x => x.ownerGroup === c.ownerGroup).length : 0;
+      return <div key={c.id}>
+        {c._isFirstOfGroup && groupSiblings > 1 && <div style={{ fontSize: 11, fontWeight: 700, color: "#6C3483", marginTop: 8, marginBottom: 4, padding: "2px 8px" }}>👥 Grupo: {c.ownerGroup} ({groupSiblings} sucursales)</div>}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: publicInactive ? "#FFF8E1" : fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderLeft: c.ownerGroup ? "4px solid #6C3483" : "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
+              <Badge text={c.tier} color={TIER_CLR[c.tier]} />
+              {c.zone && <Badge text={c.zone} color="#6C3483" />}
+              {c.paymentTerms && c.paymentTerms !== "Contado" && <Badge text={c.paymentTerms} color={TERM_CLR[c.paymentTerms]} />}
+              {score !== null && <Badge text={`Score ${score}`} color={SCORE_CLR(score)} />}
+              {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
+              {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
+              {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
+            </div>
+            <div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div>
           </div>
-          <div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div>
-        </div>
-        <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div><div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div></div>
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-          {c.phone && <WaBtn phone={c.phone} msg={`Hola ${c.contact || c.name}, soy José de Dulce Sabor.\n\n¿Cómo van las ventas de Slaps? ¿Listo para un reorden?\n\nOrdena en línea: https://dulcesaborca.com\n(707) 360-7420`} label="WA" small />}
-          <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn>
+          <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div>
+            <div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div>
+            {owedNow > 0 && <div style={{ fontSize: 11, color: "#C41E3A", fontWeight: 700 }}>Debe: {fmt(owedNow)}</div>}
+          </div>
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            {c.phone && <WaBtn phone={c.phone} msg={`Hola ${c.contact || c.name}, soy José de Dulce Sabor.\n\n¿Cómo van las ventas de Slaps? ¿Listo para un reorden?\n\nOrdena en línea: https://dulcesaborca.com\n(707) 360-7420`} label="WA" small />}
+            <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn>
+          </div>
         </div>
       </div>;
     })}
@@ -354,6 +422,16 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
         <Inp label="Zone" value={form.zone} onChange={v => setForm(p => ({ ...p, zone: v }))} options={ZONES} />
         <Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} />
         <Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" />
+      </div>
+      {/* === SUCURSALES Y CRÉDITO — v5.11 === */}
+      <div style={{ background: "#F8F4FF", borderRadius: 8, padding: "10px 14px", marginTop: 6, marginBottom: 6, borderLeft: "4px solid #6C3483" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#6C3483", marginBottom: 6 }}>Sucursal y términos de pago</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 12px" }}>
+          <Inp label="Grupo (mismo dueño)" value={form.ownerGroup} onChange={v => setForm(p => ({ ...p, ownerGroup: v }))} placeholder="Ej: Luis Hdez" />
+          <Inp label="Términos de pago" value={form.paymentTerms} onChange={v => setForm(p => ({ ...p, paymentTerms: v }))} options={PAYMENT_TERMS} />
+          <Inp label="Límite de crédito ($)" type="number" value={form.creditLimit} onChange={v => setForm(p => ({ ...p, creditLimit: v }))} placeholder="opcional" />
+        </div>
+        <div style={{ fontSize: 11, color: "#777", lineHeight: 1.4 }}>Si el dueño tiene varias tiendas, pon el mismo "Grupo" en todas para agruparlas visualmente. El límite de crédito es opcional — si está vacío, no hay tope automático.</div>
       </div>
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
 
@@ -422,7 +500,18 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
     const warnings = getStockWarnings();
     if (warnings.length > 0 && !stockAck) { setStockAck(true); return; }
     const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
-  const upSt = (id, st) => setOrders(prev => { const n = prev.map(o => o.id === id ? { ...o, status: st } : o); saveAll("orders", n); return n; });
+  const upSt = (id, st) => setOrders(prev => {
+    const n = prev.map(o => {
+      if (o.id !== id) return o;
+      const updated = { ...o, status: st };
+      // v5.11: registrar fecha de cambio de estado para scoring de pago
+      if (st === "delivered" && !o.deliveredDate) updated.deliveredDate = new Date().toISOString().slice(0, 10);
+      if (st === "paid" && !o.paidDate) updated.paidDate = new Date().toISOString().slice(0, 10);
+      return updated;
+    });
+    saveAll("orders", n);
+    return n;
+  });
   const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
   const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
   return <div>
@@ -630,28 +719,142 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
 // ===== MARKET INTELLIGENCE =====
 const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
 
-const FieldDashboard = ({ visits }) => {
-  const total = visits.length;
-  const withBrand = visits.filter(v => v.brand && v.brand !== "Neither/Unknown");
-  const megaPG = visits.filter(v => v.brand === "Mega PG" || v.brand === "Both").length;
-  const piguiUSA = visits.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length;
-  const interested = visits.filter(v => v.interest === "Very interested" || v.interest === "Somewhat interested").length;
-  const prices = visits.filter(v => v.publicPrice > 0).map(v => Number(v.publicPrice));
-  const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
-  const zones = ZONES.filter(z => z !== "Other").map(z => { const zv = visits.filter(v => v.zone === z); return { zone: z, total: zv.length, mega: zv.filter(v => v.brand === "Mega PG" || v.brand === "Both").length, pigui: zv.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length }; }).filter(z => z.total > 0);
-  const supplierCounts = {}; visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
+// === COBROS — v5.11 === Cuentas por cobrar con fechas de vencimiento por términos
+const Cobros = ({ clients, orders, setOrders, saveAll }) => {
+  const [zf, setZf] = useState("");
+  const [payModal, setPayModal] = useState(null); // { orderId, method, ref }
+  const [copied, setCopied] = useState(null);
+
+  // Todas las órdenes entregadas pero no pagadas
+  const unpaid = orders.filter(o => o.status === "delivered").map(o => {
+    const c = clients.find(x => x.id === o.clientId);
+    if (!c) return null;
+    const due = orderDueDate(o, c);
+    const daysLeft = daysUntilDue(o, c);
+    return { o, c, due, daysLeft };
+  }).filter(Boolean);
+
+  const fil = zf ? unpaid.filter(r => r.c.zone === zf) : unpaid;
+  const sorted = fil.sort((a, b) => a.daysLeft - b.daysLeft);
+
+  const atrasadas = sorted.filter(r => r.daysLeft < 0);
+  const hoy = sorted.filter(r => r.daysLeft === 0);
+  const proximas = sorted.filter(r => r.daysLeft > 0 && r.daysLeft <= 7);
+  const futuras = sorted.filter(r => r.daysLeft > 7);
+
+  const totalAtrasado = atrasadas.reduce((s, r) => s + (r.o.total || 0), 0);
+  const totalHoy = hoy.reduce((s, r) => s + (r.o.total || 0), 0);
+  const totalProximas = proximas.reduce((s, r) => s + (r.o.total || 0), 0);
+  const totalFuturas = futuras.reduce((s, r) => s + (r.o.total || 0), 0);
+  const totalGeneral = totalAtrasado + totalHoy + totalProximas + totalFuturas;
+
+  // Agrupar atrasadas + hoy + próximas por zona para planear ruta
+  const porZona = {};
+  [...atrasadas, ...hoy, ...proximas].forEach(r => {
+    const z = r.c.zone || "Sin zona";
+    if (!porZona[z]) porZona[z] = [];
+    porZona[z].push(r);
+  });
+
+  const marcarPagado = (orderId, method, ref) => {
+    setOrders(prev => {
+      const n = prev.map(o => {
+        if (o.id !== orderId) return o;
+        return { ...o, status: "paid", paidDate: new Date().toISOString().slice(0, 10), paymentMethod: method, paymentRef: ref || "" };
+      });
+      saveAll("orders", n);
+      return n;
+    });
+    setPayModal(null);
+  };
+
+  const copyCobroMsg = async (r) => {
+    const msg = `Hola ${r.c.contact || r.c.name},\n\nRecordatorio amistoso: tienes un saldo pendiente de *${fmt(r.o.total)}* de tu pedido del ${fmtD(r.o.date)}.\n\n${r.daysLeft < 0 ? `Venció hace ${Math.abs(r.daysLeft)} día${Math.abs(r.daysLeft) !== 1 ? "s" : ""}.` : r.daysLeft === 0 ? "Vence hoy." : `Vence en ${r.daysLeft} día${r.daysLeft !== 1 ? "s" : ""}.`}\n\nFormas de pago:\n• Cheque a nombre de Dulce Sabor LLC\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Efectivo\n\n¿Paso a recoger el cheque? Avísame qué día te queda bien.\n\nGracias,\nJosé — (707) 360-7420`;
+    try { await navigator.clipboard.writeText(msg); setCopied(r.o.id); setTimeout(() => setCopied(null), 2000); } catch {}
+  };
+
+  const row = (r) => {
+    const urgent = r.daysLeft < 0;
+    const today = r.daysLeft === 0;
+    const color = urgent ? "#C41E3A" : today ? "#D35400" : r.daysLeft <= 7 ? "#F39C12" : "#1A5276";
+    return <div key={r.o.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${color}`, borderRadius: 8, padding: "10px 14px", marginBottom: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>{r.c.name} <Badge text={r.c.paymentTerms || "Contado"} color={TERM_CLR[r.c.paymentTerms] || "#888"} /></div>
+          <div style={{ fontSize: 11, color: "#777", marginTop: 2 }}>
+            {r.c.contact || "—"} • {r.c.phone || "sin tel"} • {r.c.zone || "—"}
+          </div>
+          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>
+            Pedido #{r.o.id.slice(-6).toUpperCase()} del {fmtD(r.o.date)}
+            {r.o.deliveredDate && ` • Entregado ${fmtD(r.o.deliveredDate)}`}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 18, fontWeight: 900, color: "#1B7340" }}>{fmt(r.o.total)}</div>
+          <Badge text={urgent ? `${Math.abs(r.daysLeft)}d atrasado` : today ? "Vence HOY" : `Vence en ${r.daysLeft}d`} color={color} />
+          <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>Vence: {fmtD(r.due)}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+        <Btn small primary onClick={() => setPayModal({ orderId: r.o.id, clientName: r.c.name, total: r.o.total, method: "Cheque", ref: "" })}>Registrar pago</Btn>
+        <Btn small onClick={() => copyCobroMsg(r)}>{copied === r.o.id ? "✓ Copiado" : "Copiar recordatorio"}</Btn>
+        {r.c.phone && <WaBtn phone={r.c.phone} msg={`Hola ${r.c.contact || r.c.name}, recordatorio del pedido del ${fmtD(r.o.date)} por ${fmt(r.o.total)}. ¿Paso por el cheque esta semana? — José, Dulce Sabor`} label="WA" small />}
+      </div>
+    </div>;
+  };
 
   return <div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
-      <Card title="Stores visited" value={total} color="#1A5276" />
-      <Card title="Carry Mega PG" value={megaPG} sub={total > 0 ? `${Math.round(megaPG / total * 100)}%` : ""} color="#1B7340" />
-      <Card title="Carry Pigüi USA" value={piguiUSA} sub={total > 0 ? `${Math.round(piguiUSA / total * 100)}%` : ""} color="#C41E3A" />
-      <Card title="Interested" value={interested} sub={total > 0 ? `${Math.round(interested / total * 100)}%` : ""} color="#D35400" />
+    <div style={{ background: "#FDF2E9", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #D35400" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#D35400", marginBottom: 4 }}>Cuentas por cobrar</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Órdenes entregadas sin pago, ordenadas por fecha de vencimiento según los términos de cada cliente. Usa el filtro de zona para planear tu ruta de cobros semanal.</div>
     </div>
-    {avgPrice > 0 && <div style={{ fontSize: 13, color: "#555", marginBottom: 12 }}>Avg public price: <b>{fmt(avgPrice)}</b>/bag across {prices.length} stores</div>}
-    {zones.length > 0 && <><ST>Zone penetration</ST>{zones.map(z => <div key={z.zone} style={{ marginBottom: 8 }}><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{z.zone} <span style={{ color: "#999", fontWeight: 400 }}>({z.total} stores)</span></div><div style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: "#f0f0f0" }}>{z.mega > 0 && <div style={{ width: `${z.mega / z.total * 100}%`, background: "#1B7340" }} title={`Mega PG: ${z.mega}`} />}{z.pigui > 0 && <div style={{ width: `${z.pigui / z.total * 100}%`, background: "#C41E3A" }} title={`Pigüi USA: ${z.pigui}`} />}</div><div style={{ fontSize: 10, color: "#999", marginTop: 1 }}><span style={{ color: "#1B7340" }}>■ Mega PG: {z.mega}</span> <span style={{ color: "#C41E3A", marginLeft: 8 }}>■ Pigüi USA: {z.pigui}</span></div></div>)}</>}
-    {Object.keys(supplierCounts).length > 0 && <><ST>Supplier channels</ST>{Object.entries(supplierCounts).sort((a, b) => b[1] - a[1]).map(([sup, cnt]) => <div key={sup} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{sup}</span><b>{cnt}</b></div>)}</>}
-    {total === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No field visits yet. Go to "Visits" tab to start capturing data.</div>}
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+      <Card title="Atrasado" value={fmt(totalAtrasado)} sub={`${atrasadas.length} orden${atrasadas.length !== 1 ? "es" : ""}`} color="#C41E3A" />
+      <Card title="Vence hoy" value={fmt(totalHoy)} sub={`${hoy.length} orden${hoy.length !== 1 ? "es" : ""}`} color="#D35400" />
+      <Card title="Próximos 7 días" value={fmt(totalProximas)} sub={`${proximas.length} orden${proximas.length !== 1 ? "es" : ""}`} color="#F39C12" />
+      <Card title="Futuras" value={fmt(totalFuturas)} sub={`${futuras.length} orden${futuras.length !== 1 ? "es" : ""}`} color="#1A5276" />
+      <Card title="TOTAL" value={fmt(totalGeneral)} sub={`${sorted.length} orden${sorted.length !== 1 ? "es" : ""}`} color="#1B7340" />
+    </div>
+
+    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Filtrar por zona:</label>
+      <select value={zf} onChange={e => setZf(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}>
+        <option value="">Todas las zonas</option>
+        {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
+      </select>
+    </div>
+
+    {sorted.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay cobros pendientes. 🎉</div>}
+
+    {atrasadas.length > 0 && <><ST>🔴 Atrasadas ({atrasadas.length})</ST>{atrasadas.map(row)}</>}
+    {hoy.length > 0 && <><ST>🟠 Vencen hoy ({hoy.length})</ST>{hoy.map(row)}</>}
+    {proximas.length > 0 && <><ST>🟡 Vencen en los próximos 7 días ({proximas.length})</ST>{proximas.map(row)}</>}
+    {futuras.length > 0 && <><ST>🔵 Futuras ({futuras.length})</ST>{futuras.map(row)}</>}
+
+    {Object.keys(porZona).length > 1 && (atrasadas.length + hoy.length + proximas.length) > 0 && <>
+      <ST>🗺️ Ruta sugerida de cobros por zona</ST>
+      <div style={{ fontSize: 12, color: "#777", marginBottom: 8 }}>Agrupa tus visitas de cobro por zona para optimizar la ruta.</div>
+      {Object.entries(porZona).sort((a, b) => b[1].length - a[1].length).map(([zone, rs]) => {
+        const t = rs.reduce((s, r) => s + r.o.total, 0);
+        return <div key={zone} style={{ padding: "8px 12px", background: "#F8F4FF", borderLeft: "4px solid #6C3483", borderRadius: 6, marginBottom: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#6C3483" }}>{zone} — {rs.length} parada{rs.length !== 1 ? "s" : ""} • {fmt(t)}</div>
+          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>{rs.map(r => r.c.name).join(" • ")}</div>
+        </div>;
+      })}
+    </>}
+
+    {payModal && <Modal title={`Registrar pago — ${payModal.clientName}`} onClose={() => setPayModal(null)}>
+      <div style={{ fontSize: 14, marginBottom: 12, padding: "10px 14px", background: "#E8F5E8", borderRadius: 6 }}>
+        <div style={{ color: "#1B7340" }}>Monto: <b style={{ fontSize: 18 }}>{fmt(payModal.total)}</b></div>
+      </div>
+      <Inp label="Forma de pago" value={payModal.method} onChange={v => setPayModal(p => ({ ...p, method: v }))} options={["Cheque", "Efectivo", "Zelle", "Venmo", "Otro"]} />
+      <Inp label={payModal.method === "Cheque" ? "Número de cheque" : "Referencia (opcional)"} value={payModal.ref} onChange={v => setPayModal(p => ({ ...p, ref: v }))} placeholder={payModal.method === "Cheque" ? "#1234" : ""} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+        <Btn onClick={() => setPayModal(null)}>Cancelar</Btn>
+        <Btn primary onClick={() => marcarPagado(payModal.orderId, payModal.method, payModal.ref)}>Confirmar pago</Btn>
+      </div>
+    </Modal>}
   </div>;
 };
 
@@ -702,40 +905,6 @@ const VisitsList = ({ visits, onEdit, onDelete }) => {
       {v.notes && <div style={{ fontSize: 12, color: "#555", marginTop: 4, lineHeight: 1.4 }}>{v.notes.length > 150 ? v.notes.slice(0, 150) + "..." : v.notes}</div>}
       {v.productsSeen?.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>{v.productsSeen.map(p => <span key={p} style={{ fontSize: 10, padding: "1px 6px", background: "#f0f0f0", borderRadius: 3, color: "#666" }}>{p}</span>)}</div>}
     </div>)}
-  </div>;
-};
-
-const FieldExport = ({ visits }) => {
-  const exportVisits = () => {
-    const lines = visits.map(v => [
-      `STORE: ${v.storeName}`,
-      `Zone: ${v.zone || "—"} | Type: ${v.storeType || "—"} | Date: ${fmtD(v.date)}`,
-      `Contact: ${v.contact || "—"} | Phone: ${v.phone || "—"}`,
-      `Address: ${v.address || "—"}`,
-      `Brand on shelf: ${v.brand || "—"}`,
-      `Products seen: ${v.productsSeen?.join(", ") || "—"}`,
-      `Supplier: ${v.supplier || "—"} | Public price: ${v.publicPrice ? fmt(v.publicPrice) : "—"}`,
-      `Interest: ${v.interest || "—"} | Foot traffic: ${v.footTraffic || "—"}`,
-      `Left samples: ${v.leftSamples ? `Yes (${v.samplesQty || "?"})` : "No"}`,
-      v.painPoints ? `Pain points: ${v.painPoints}` : null,
-      v.competitorProducts ? `Competitors: ${v.competitorProducts}` : null,
-      v.notes ? `Notes: ${v.notes}` : null,
-      "─".repeat(50)
-    ].filter(Boolean).join("\n")).join("\n\n");
-    const header = `DULCE SABOR — Field Intelligence Report\nExported: ${new Date().toLocaleString()}\nTotal visits: ${visits.length}\n${"═".repeat(50)}\n\n`;
-    const blob = new Blob([header + lines], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_FieldData_${new Date().toISOString().slice(0,10)}.txt`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-  };
-  return <div>
-    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "16px 20px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 6 }}>Export field data for AI analysis</div>
-      <div style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>Download your visit data as a text file, then upload it to Claude for a full intelligence report — pricing analysis, competitive map, and follow-up plan. Free and with full context of your business.</div>
-    </div>
-    <Btn primary onClick={exportVisits} disabled={visits.length === 0}>Export {visits.length} visit{visits.length !== 1 ? "s" : ""} for analysis</Btn>
-    {visits.length === 0 && <p style={{ color: "#999", fontSize: 12, marginTop: 8 }}>Add visits first in the Visits tab.</p>}
-    {visits.length > 0 && <div style={{ marginTop: 16 }}><ST>Preview ({visits.length} visits)</ST>{visits.slice(-5).reverse().map(v => <div key={v.id} style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}><b>{v.storeName}</b> <span style={{ color: "#999" }}>{v.zone} • {fmtD(v.date)}</span> {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? "#1B7340" : "#D35400"} />}</div>)}{visits.length > 5 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...and {visits.length - 5} more</div>}</div>}
   </div>;
 };
 
@@ -1501,7 +1670,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.10" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.11" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1634,7 +1803,17 @@ export default function App() {
       const lowStockCount = inventory.filter(i => i.stock > 0 && i.stock <= LOW).length;
       const outStockCount = inventory.filter(i => i.stock === 0).length;
 
-      const total = webPending + vencidos + proximos + welcomesPend + postdelPend + lowStockCount + outStockCount;
+      // Compute cobros pendientes (atrasados + hoy)
+      let cobrosAtrasados = 0, cobrosHoy = 0, montoAtrasado = 0;
+      orders.filter(o => o.status === "delivered").forEach(o => {
+        const c = clients.find(x => x.id === o.clientId);
+        if (!c) return;
+        const d = daysUntilDue(o, c);
+        if (d < 0) { cobrosAtrasados++; montoAtrasado += (o.total || 0); }
+        else if (d === 0) cobrosHoy++;
+      });
+
+      const total = webPending + vencidos + proximos + welcomesPend + postdelPend + lowStockCount + outStockCount + cobrosAtrasados + cobrosHoy;
 
       // Skip if nothing pending (still mark as sent to avoid re-check)
       if (total === 0) {
@@ -1650,6 +1829,8 @@ export default function App() {
       if (proximos > 0) lines.push(`🟡 Recordatorios próximos: ${proximos}`);
       if (welcomesPend > 0) lines.push(`👋 Clientes nuevos sin bienvenida: ${welcomesPend}`);
       if (postdelPend > 0) lines.push(`📊 Seguimientos post-entrega: ${postdelPend}`);
+      if (cobrosAtrasados > 0) lines.push(`💰 Cobros atrasados: ${cobrosAtrasados} (${fmt(montoAtrasado)})`);
+      if (cobrosHoy > 0) lines.push(`💵 Cobros que vencen hoy: ${cobrosHoy}`);
       if (lowStockCount > 0) lines.push(`📉 Productos con inventario bajo: ${lowStockCount}`);
       if (outStockCount > 0) lines.push(`❌ Productos agotados: ${outStockCount}`);
       lines.push(``, `TOTAL: ${total} alerta${total !== 1 ? "s" : ""}`, ``, `Abrir CRM: ${window.location.origin}`, ``, `Que tengas un excelente día. 📚`);
@@ -1678,12 +1859,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  // Count cobros pendientes (delivered, unpaid) for tab badge
+  const cobrosPending = orders.filter(o => o.status === "delivered").length;
+
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "cobros", l: `Cobros${cobrosPending > 0 ? ` (${cobrosPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "visits", l: `Visits (${visits.length})` }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.10</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.11</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -1702,9 +1886,8 @@ export default function App() {
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
       {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
       {tab === "receipt" && <Receipt order={ro} clients={clients} />}
-      {tab === "field" && <FieldDashboard visits={visits} />}
+      {tab === "cobros" && <Cobros clients={clients} orders={orders} setOrders={setOrders} saveAll={sv} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
-      {tab === "analysis" && <FieldExport visits={visits} />}
     </div>
     {showVisitForm && <VisitForm onSave={saveVisit} onClose={() => { setShowVisitForm(false); setEditVisit(null); }} editVisit={editVisit} />}
   </div>;
