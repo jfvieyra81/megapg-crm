@@ -720,8 +720,8 @@ const Receipt = ({ order, clients, orders }) => {
     // Si está pagada — info de pago
     if (order.status === "paid" && order.paidDate) {
       y += 8; doc.setFillColor(232, 245, 232); doc.rect(mg, y - 4, cw, 22, "F");
-      doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(27, 115, 64);
-      doc.text(`✓ PAGADO el ${fmtD(order.paidDate)}`, mg + 8, y + 10);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(27, 115, 64);
+      doc.text(`PAGADO el ${fmtD(order.paidDate)}`, mg + 8, y + 10);
       if (order.paymentMethod) doc.text(`${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}`, W - mg - 8, y + 10, { align: "right" });
       y += 28;
     }
