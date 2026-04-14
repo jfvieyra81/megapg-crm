@@ -52,6 +52,56 @@ const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
 const PAYMENT_TERMS = ["Contado", "Crédito 7 días", "Crédito 15 días", "Crédito 30 días"];
 const TERM_DAYS = { "Contado": 0, "Crédito 7 días": 7, "Crédito 15 días": 15, "Crédito 30 días": 30 };
 const TERM_CLR = { "Contado": "#1B7340", "Crédito 7 días": "#1A5276", "Crédito 15 días": "#D35400", "Crédito 30 días": "#6C3483" };
+
+// LANGUAGE — v5.13 — Bilingual receipts and WhatsApp messages
+const LANGUAGES = ["Español", "English"];
+const LANG_CLR = { "Español": "#C41E3A", "English": "#1A5276" };
+// Translation dictionary — keys in Spanish, values in English
+const T = {
+  "Español": (k) => k, // identity — Spanish is the source
+  "English": (k) => ({
+    // Receipt headers
+    "INVOICE / FACTURA": "INVOICE",
+    "BILL TO / FACTURAR A": "BILL TO",
+    "FECHAS": "DATES",
+    "Pedido": "Order date",
+    "Entrega": "Delivery date",
+    "Vence": "Due date",
+    "Términos": "Terms",
+    "ESTADO": "STATUS",
+    "Producto": "Product",
+    "Cant.": "Qty",
+    "Precio": "Price",
+    "Total": "Total",
+    "Subtotal": "Subtotal",
+    "Descuento": "Discount",
+    "Sales Tax (Sale for Resale)": "Sales Tax (Sale for Resale)",
+    "TOTAL": "TOTAL",
+    "PAGADO el": "PAID on",
+    "SALE FOR RESALE / VENTA PARA REVENTA": "SALE FOR RESALE",
+    "Buyer's Resale Certificate on file. CA Seller's Permit:": "Buyer's Resale Certificate on file. CA Seller's Permit:",
+    "Formas de pago": "Payment methods",
+    "Cheque a nombre de:": "Check payable to:",
+    "Efectivo contra entrega": "Cash on delivery",
+    "Firma del cliente / recibido": "Customer signature / received",
+    "Firma del vendedor": "Seller signature",
+    "Atn:": "Attn:",
+    "Notas:": "Notes:",
+    "¡Gracias!": "Thank you!",
+    "¡Gracias por tu compra!": "Thank you for your business!",
+    // Payment terms
+    "Contado": "Net on receipt",
+    "Crédito 7 días": "Net 7",
+    "Crédito 15 días": "Net 15",
+    "Crédito 30 días": "Net 30",
+    // Order status
+    "pending": "pending",
+    "delivered": "delivered",
+    "paid": "paid",
+  }[k] || k),
+};
+const tr = (lang, key) => (T[lang] || T["Español"])(key);
+
 const SCORE_CLR = (s) => s >= 90 ? "#1B7340" : s >= 70 ? "#D35400" : s >= 50 ? "#C41E3A" : "#888";
 
 // === BUSINESS LEGAL INFO — v5.12 — Para recibos legales en California ===
@@ -264,14 +314,26 @@ const daysUntilDue = (order, client) => {
 const cleanPhone = (ph) => { if (!ph) return ""; return ph.replace(/[^0-9]/g, "").replace(/^1?(\d{10})$/, "1$1"); };
 const waLink = (phone, msg) => `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(msg)}`;
 const waOrder = (order, client) => {
+  const isEN = client?.language === "English";
   const items = order.items.map(it => { const p = pF(it.productId); return `  • ${p?.name || it.productId} x${it.qty} = ${fmt((p?.price || 0) * it.qty * (1 - (order.discount || 0)))}`; }).join("\n");
+  if (isEN) {
+    return `*DULCE SABOR*\nOrder #${order.id.slice(-6).toUpperCase()}\nDate: ${fmtD(order.date)}\n\nHi ${client?.contact || client?.name || ""},\n\nHere is your order confirmation:\n\n${items}\n${order.discount > 0 ? `\nDiscount: ${Math.round(order.discount * 100)}% (${client?.tier})\n` : ""}${order.foDisc ? `1st order discount: ${order.foDisc.tier} cases — $${order.foDisc.price}/case Slaps\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nPayment: Cash, Zelle, Venmo or Check\nQuestions? Call me at (707) 360-7420\n\nOrder online: https://dulcesaborca.com\n\nThank you!\n— José Flores, Dulce Sabor NorCal`;
+  }
   return `*DULCE SABOR*\nPedido #${order.id.slice(-6).toUpperCase()}\nFecha: ${fmtD(order.date)}\n\nHola ${client?.contact || client?.name || ""},\n\nAquí está la confirmación de tu pedido:\n\n${items}\n${order.discount > 0 ? `\nDescuento: ${Math.round(order.discount * 100)}% (${client?.tier})\n` : ""}${order.foDisc ? `Descuento 1ª orden: ${order.foDisc.tier} cajas — $${order.foDisc.price}/caja Slaps\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nFormas de pago: Efectivo, Zelle, Venmo o Cheque\n¿Preguntas? Llámame al (707) 360-7420\n\nOrdena en línea: https://dulcesaborca.com\n\n¡Gracias!\n— José Flores, Dulce Sabor NorCal`;
 };
 const waReceipt = (order, client) => {
+  const isEN = client?.language === "English";
   const items = order.items.map(it => { const p = pF(it.productId); return `${p?.name || it.productId} x${it.qty}`; }).join(", ");
+  if (isEN) {
+    return `*DULCE SABOR — Receipt #${order.id.slice(-6).toUpperCase()}*\nDate: ${fmtD(order.date)}\nCustomer: ${client?.name || ""}\nItems: ${items}\n${order.discount > 0 ? `Discount: ${Math.round(order.discount * 100)}%\n` : ""}${order.foDisc ? `1st order discount: ${order.foDisc.tier} cases — $${order.foDisc.price}/case Slaps\n` : ""}*Total: ${fmt(order.total)}*\nStatus: ${order.status.toUpperCase()}\n\nThank you for your business!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
+  }
   return `*DULCE SABOR — Recibo #${order.id.slice(-6).toUpperCase()}*\nFecha: ${fmtD(order.date)}\nCliente: ${client?.name || ""}\nArtículos: ${items}\n${order.discount > 0 ? `Descuento: ${Math.round(order.discount * 100)}%\n` : ""}${order.foDisc ? `Descuento 1ª orden: ${order.foDisc.tier} cajas — $${order.foDisc.price}/caja Slaps\n` : ""}*Total: ${fmt(order.total)}*\nEstado: ${order.status.toUpperCase()}\n\n¡Gracias por tu compra!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
 };
 const waPayment = (order, client) => {
+  const isEN = client?.language === "English";
+  if (isEN) {
+    return `Hi ${client?.contact || client?.name || ""},\n\nFriendly reminder about your order #${order.id.slice(-6).toUpperCase()} from ${fmtD(order.date)} for *${fmt(order.total)}*.\n\nStatus: ${order.status === "delivered" ? "Delivered — payment pending" : "Pending"}\n\nPayment options:\n• Cash on next visit\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Check payable to Dulce Sabor LLC\n\nQuestions? Call me at (707) 360-7420\n\nThank you!\n— José Flores, Dulce Sabor`;
+  }
   return `Hola ${client?.contact || client?.name || ""},\n\nRecordatorio amistoso sobre tu pedido #${order.id.slice(-6).toUpperCase()} del ${fmtD(order.date)} por *${fmt(order.total)}*.\n\nEstado: ${order.status === "delivered" ? "Entregado — pago pendiente" : "Pendiente"}\n\nFormas de pago:\n• Efectivo en la próxima visita\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Cheque a nombre de Dulce Sabor LLC\n\n¿Preguntas? Llámame al (707) 360-7420\n\n¡Gracias!\n— José Flores, Dulce Sabor`;
 };
 const WaBtn = ({ phone, msg, label, small }) => <a href={waLink(phone, msg)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: small ? "3px 8px" : "6px 12px", background: "#25D366", color: "#fff", borderRadius: 6, fontSize: small ? 10 : 12, fontWeight: 600, textDecoration: "none", cursor: "pointer", whiteSpace: "nowrap" }}>{label || "WhatsApp"}</a>;
@@ -312,7 +374,7 @@ const Dashboard = ({ clients, orders, inventory }) => {
 };
 
 const Clients = ({ clients, setClients, orders, saveAll }) => {
-  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", ownerGroup: "", paymentTerms: "Contado", creditLimit: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
+  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", ownerGroup: "", paymentTerms: "Contado", creditLimit: "", language: "Español", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
   const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null);
   const [form, setForm] = useState(emptyForm); const [search, setSearch] = useState("");
   const [showWebSection, setShowWebSection] = useState(false); const [uploading, setUploading] = useState(false); const [syncMsg, setSyncMsg] = useState(null); const [bulkSyncing, setBulkSyncing] = useState(false);
@@ -419,6 +481,7 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
               <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
               <Badge text={c.tier} color={TIER_CLR[c.tier]} />
               {c.zone && <Badge text={c.zone} color="#6C3483" />}
+              {c.language === "English" && <Badge text="EN" color={LANG_CLR["English"]} />}
               {c.paymentTerms && c.paymentTerms !== "Contado" && <Badge text={c.paymentTerms} color={TERM_CLR[c.paymentTerms]} />}
               {score !== null && <Badge text={`Score ${score}`} color={SCORE_CLR(score)} />}
               {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
@@ -448,15 +511,16 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
         <Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} />
         <Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" />
       </div>
-      {/* === SUCURSALES Y CRÉDITO — v5.11 === */}
+      {/* === SUCURSALES, CRÉDITO E IDIOMA — v5.13 === */}
       <div style={{ background: "#F8F4FF", borderRadius: 8, padding: "10px 14px", marginTop: 6, marginBottom: 6, borderLeft: "4px solid #6C3483" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#6C3483", marginBottom: 6 }}>Sucursal y términos de pago</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 12px" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#6C3483", marginBottom: 6 }}>Sucursal, términos de pago e idioma</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "0 12px" }}>
           <Inp label="Grupo (mismo dueño)" value={form.ownerGroup} onChange={v => setForm(p => ({ ...p, ownerGroup: v }))} placeholder="Ej: Luis Hdez" />
           <Inp label="Términos de pago" value={form.paymentTerms} onChange={v => setForm(p => ({ ...p, paymentTerms: v }))} options={PAYMENT_TERMS} />
           <Inp label="Límite de crédito ($)" type="number" value={form.creditLimit} onChange={v => setForm(p => ({ ...p, creditLimit: v }))} placeholder="opcional" />
+          <Inp label="Idioma del cliente" value={form.language} onChange={v => setForm(p => ({ ...p, language: v }))} options={LANGUAGES} />
         </div>
-        <div style={{ fontSize: 11, color: "#777", lineHeight: 1.4 }}>Si el dueño tiene varias tiendas, pon el mismo "Grupo" en todas para agruparlas visualmente. El límite de crédito es opcional — si está vacío, no hay tope automático.</div>
+        <div style={{ fontSize: 11, color: "#777", lineHeight: 1.4 }}>El idioma controla el recibo y los mensajes de WhatsApp para este cliente. Si tienes varias sucursales del mismo dueño, pon el mismo "Grupo".</div>
       </div>
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
 
@@ -646,6 +710,7 @@ const Receipt = ({ order, clients, orders }) => {
   const invNum = invoiceNumber(order, orders || []);
   const dueDate = cl ? orderDueDate(order, cl) : null;
   const terms = cl?.paymentTerms || "Contado";
+  const lang = cl?.language || "Español";
 
   const downloadPDF = () => {
     const doc = new jsPDF({ unit: "pt", format: "letter" });
@@ -669,38 +734,38 @@ const Receipt = ({ order, clients, orders }) => {
 
     // INVOICE label + número
     doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(60, 60, 60);
-    doc.text("INVOICE / FACTURA", mg, y);
+    doc.text(tr(lang, "INVOICE / FACTURA"), mg, y);
     doc.setFontSize(11); doc.setTextColor(196, 30, 58);
     doc.text(invNum, W - mg, y, { align: "right" }); y += 18;
 
     // Bill To + Fechas
     doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
-    doc.text("BILL TO / FACTURAR A", mg, y);
-    doc.text("FECHAS", W - mg - 160, y); y += 12;
+    doc.text(tr(lang, "BILL TO / FACTURAR A"), mg, y);
+    doc.text(tr(lang, "FECHAS"), W - mg - 160, y); y += 12;
     doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(30, 30, 30);
     doc.text(cl?.name || "\u2014", mg, y);
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(80, 80, 80);
-    doc.text(`Pedido: ${fmtD(order.date)}`, W - mg - 160, y); y += 12;
+    doc.text(`${tr(lang, "Pedido")}: ${fmtD(order.date)}`, W - mg - 160, y); y += 12;
     if (cl?.address) { doc.text(cl.address, mg, y); }
-    if (order.deliveredDate) doc.text(`Entrega: ${fmtD(order.deliveredDate)}`, W - mg - 160, y); y += 12;
-    if (cl?.contact) { doc.text(`Atn: ${cl.contact}`, mg, y); }
-    if (dueDate && terms !== "Contado") doc.text(`Vence: ${fmtD(dueDate)}`, W - mg - 160, y); y += 12;
+    if (order.deliveredDate) doc.text(`${tr(lang, "Entrega")}: ${fmtD(order.deliveredDate)}`, W - mg - 160, y); y += 12;
+    if (cl?.contact) { doc.text(`${tr(lang, "Atn:")} ${cl.contact}`, mg, y); }
+    if (dueDate && terms !== "Contado") doc.text(`${tr(lang, "Vence")}: ${fmtD(dueDate)}`, W - mg - 160, y); y += 12;
     if (cl?.phone) { doc.text(cl.phone, mg, y); y += 12; }
 
     // Status badge + términos
     y += 6;
     const sc = { pending: [211, 84, 0], delivered: [26, 82, 118], paid: [27, 115, 64] }[order.status] || [100, 100, 100];
     doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(sc[0], sc[1], sc[2]);
-    doc.text(`ESTADO: ${order.status.toUpperCase()}`, mg, y);
+    doc.text(`${tr(lang, "ESTADO")}: ${tr(lang, order.status).toUpperCase()}`, mg, y);
     doc.setTextColor(108, 52, 131);
-    doc.text(`Términos: ${terms}`, W - mg, y, { align: "right" }); y += 16;
+    doc.text(`${tr(lang, "Términos")}: ${tr(lang, terms)}`, W - mg, y, { align: "right" }); y += 16;
 
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 16;
 
     // Tabla productos
     doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(196, 30, 58);
     const cols = [mg, mg + cw * 0.50, mg + cw * 0.65, mg + cw * 0.82];
-    doc.text("Producto", cols[0], y); doc.text("Cant.", cols[1], y, { align: "center" }); doc.text("Precio", cols[2], y, { align: "right" }); doc.text("Total", W - mg, y, { align: "right" }); y += 8;
+    doc.text(tr(lang, "Producto"), cols[0], y); doc.text(tr(lang, "Cant."), cols[1], y, { align: "center" }); doc.text(tr(lang, "Precio"), cols[2], y, { align: "right" }); doc.text(tr(lang, "Total"), W - mg, y, { align: "right" }); y += 8;
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 14;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(40, 40, 40);
     order.items.forEach(it => { const p = pF(it.productId); doc.text(p?.name || it.productId, cols[0], y); doc.text(String(it.qty), cols[1], y, { align: "center" }); doc.text(fmt(p?.price), cols[2], y, { align: "right" }); doc.text(fmt((p?.price || 0) * it.qty), W - mg, y, { align: "right" }); y += 6; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.3); doc.line(mg, y, W - mg, y); y += 14; });
@@ -708,49 +773,48 @@ const Receipt = ({ order, clients, orders }) => {
 
     // Totales
     doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(60, 60, 60);
-    doc.text("Subtotal", mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 16;
-    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`Descuento (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 16; }
-    // Sales tax line — siempre $0 porque vendemos para reventa
+    doc.text(tr(lang, "Subtotal"), mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 16;
+    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`${tr(lang, "Descuento")} (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 16; }
     doc.setTextColor(120, 120, 120); doc.setFontSize(9);
-    doc.text("Sales Tax (Sale for Resale)", mg + cw * 0.5, y); doc.text("$0.00", W - mg, y, { align: "right" }); y += 14;
+    doc.text(tr(lang, "Sales Tax (Sale for Resale)"), mg + cw * 0.5, y); doc.text("$0.00", W - mg, y, { align: "right" }); y += 14;
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg + cw * 0.5, y, W - mg, y); y += 20;
     doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(196, 30, 58);
-    doc.text("TOTAL", mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 16;
+    doc.text(tr(lang, "TOTAL"), mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 16;
 
     // Si está pagada — info de pago
     if (order.status === "paid" && order.paidDate) {
       y += 8; doc.setFillColor(232, 245, 232); doc.rect(mg, y - 4, cw, 22, "F");
       doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(27, 115, 64);
-      doc.text(`PAGADO el ${fmtD(order.paidDate)}`, mg + 8, y + 10);
+      doc.text(`${tr(lang, "PAGADO el")} ${fmtD(order.paidDate)}`, mg + 8, y + 10);
       if (order.paymentMethod) doc.text(`${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}`, W - mg - 8, y + 10, { align: "right" });
       y += 28;
     }
 
-    if (order.notes) { y += 6; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`Notas: ${order.notes}`, mg, y); y += 14; }
+    if (order.notes) { y += 6; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`${tr(lang, "Notas:")} ${order.notes}`, mg, y); y += 14; }
 
     // Sale for Resale notice
     y += 8; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 12;
     doc.setFillColor(255, 248, 225); doc.rect(mg, y - 4, cw, 28, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(60, 60, 60);
-    doc.text("SALE FOR RESALE / VENTA PARA REVENTA", mg + 8, y + 8);
+    doc.text(tr(lang, "SALE FOR RESALE / VENTA PARA REVENTA"), mg + 8, y + 8);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(100, 100, 100);
-    doc.text(`Buyer's Resale Certificate on file. Seller's Permit: ${BUSINESS.sellersPermit}`, mg + 8, y + 20);
+    doc.text(`${tr(lang, "Buyer's Resale Certificate on file. CA Seller's Permit:")} ${BUSINESS.sellersPermit}`, mg + 8, y + 20);
     y += 36;
 
     // Formas de pago
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text("Formas de pago", mg, y); y += 13;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text(tr(lang, "Formas de pago"), mg, y); y += 13;
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100, 100, 100);
-    [`Cheque a nombre de: ${BUSINESS.legalName}`, `Zelle: ${BUSINESS.zelle}`, `Venmo: ${BUSINESS.venmo}`, "Efectivo contra entrega"].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 12; });
+    [`${tr(lang, "Cheque a nombre de:")} ${BUSINESS.legalName}`, `Zelle: ${BUSINESS.zelle}`, `Venmo: ${BUSINESS.venmo}`, tr(lang, "Efectivo contra entrega")].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 12; });
 
     // Línea de firma
     y += 12; doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.5);
     doc.line(mg, y, mg + cw * 0.45, y); doc.line(mg + cw * 0.55, y, W - mg, y); y += 10;
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(140, 140, 140);
-    doc.text("Firma del cliente / recibido", mg, y); doc.text("Firma del vendedor", mg + cw * 0.55, y); y += 16;
+    doc.text(tr(lang, "Firma del cliente / recibido"), mg, y); doc.text(tr(lang, "Firma del vendedor"), mg + cw * 0.55, y); y += 16;
 
     // Footer
     doc.setFontSize(8); doc.setTextColor(160, 160, 160);
-    doc.text("\u00a1Gracias por tu compra! \u2022 https://" + BUSINESS.website, W / 2, y, { align: "center" });
+    doc.text(`${tr(lang, "¡Gracias por tu compra!")} \u2022 https://${BUSINESS.website}`, W / 2, y, { align: "center" });
     doc.setFillColor(196, 30, 58); doc.rect(0, doc.internal.pageSize.getHeight() - 6, W, 6, "F");
     doc.save(`${invNum}_${(cl?.name || "cliente").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
   };
@@ -777,19 +841,19 @@ td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;
 </style></head><body>
 <div class="hdr"><h1>${BUSINESS.tradeName}</h1><p><b>${BUSINESS.legalName}</b></p><p>${BUSINESS.address}<br>${BUSINESS.cityStateZip}</p><p>${BUSINESS.contact} &bull; ${BUSINESS.phone}</p><p>${BUSINESS.email}</p></div>
 <div class="legal">EIN: ${BUSINESS.ein}<br>CA Seller's Permit: ${BUSINESS.sellersPermit}</div>
-<div class="info"><div><b>INVOICE</b></div><div><b>${invNum}</b></div></div>
-<div class="info2"><b>${cl?.name || ""}</b>${cl?.address ? `<br>${cl.address}` : ""}${cl?.contact ? `<br>Atn: ${cl.contact}` : ""}${cl?.phone ? `<br>${cl.phone}` : ""}<br>Pedido: ${fmtD(order.date)}${order.deliveredDate ? `<br>Entrega: ${fmtD(order.deliveredDate)}` : ""}${dueDate && terms !== "Contado" ? `<br>Vence: ${fmtD(dueDate)} (${terms})` : `<br>Términos: ${terms}`}</div>
-<table><thead><tr><th>Producto</th><th style="text-align:center">Cant.</th><th style="text-align:right">Total</th></tr></thead><tbody>${items}</tbody></table>
-<div class="tot"><div class="line"><span>Subtotal</span><span>${fmt(sub)}</span></div>
-${disc > 0 ? `<div class="line"><span>Desc. ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
-<div class="line" style="font-size:9px;color:#666"><span>Sales Tax (Resale)</span><span>$0.00</span></div>
-<div class="line grand"><span>TOTAL</span><span>${fmt(order.total)}</span></div></div>
-${order.status === "paid" && order.paidDate ? `<div class="paid">PAGADO ${fmtD(order.paidDate)}${order.paymentMethod ? ` &bull; ${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}` : ""}</div>` : ""}
-<div class="resale">SALE FOR RESALE<br>Resale Cert. on file<br>Permit: ${BUSINESS.sellersPermit}</div>
-<div class="pay"><b>Formas de pago:</b><br>&bull; Cheque: ${BUSINESS.legalName}<br>&bull; Zelle: ${BUSINESS.zelle}<br>&bull; Venmo: ${BUSINESS.venmo}<br>&bull; Efectivo</div>
+<div class="info"><div><b>${tr(lang, "INVOICE / FACTURA")}</b></div><div><b>${invNum}</b></div></div>
+<div class="info2"><b>${cl?.name || ""}</b>${cl?.address ? `<br>${cl.address}` : ""}${cl?.contact ? `<br>${tr(lang, "Atn:")} ${cl.contact}` : ""}${cl?.phone ? `<br>${cl.phone}` : ""}<br>${tr(lang, "Pedido")}: ${fmtD(order.date)}${order.deliveredDate ? `<br>${tr(lang, "Entrega")}: ${fmtD(order.deliveredDate)}` : ""}${dueDate && terms !== "Contado" ? `<br>${tr(lang, "Vence")}: ${fmtD(dueDate)} (${tr(lang, terms)})` : `<br>${tr(lang, "Términos")}: ${tr(lang, terms)}`}</div>
+<table><thead><tr><th>${tr(lang, "Producto")}</th><th style="text-align:center">${tr(lang, "Cant.")}</th><th style="text-align:right">${tr(lang, "Total")}</th></tr></thead><tbody>${items}</tbody></table>
+<div class="tot"><div class="line"><span>${tr(lang, "Subtotal")}</span><span>${fmt(sub)}</span></div>
+${disc > 0 ? `<div class="line"><span>${lang === "English" ? "Disc." : "Desc."} ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
+<div class="line" style="font-size:9px;color:#666"><span>${tr(lang, "Sales Tax (Sale for Resale)")}</span><span>$0.00</span></div>
+<div class="line grand"><span>${tr(lang, "TOTAL")}</span><span>${fmt(order.total)}</span></div></div>
+${order.status === "paid" && order.paidDate ? `<div class="paid">${tr(lang, "PAGADO el").toUpperCase()} ${fmtD(order.paidDate)}${order.paymentMethod ? ` &bull; ${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}` : ""}</div>` : ""}
+<div class="resale">${tr(lang, "SALE FOR RESALE / VENTA PARA REVENTA")}<br>${lang === "English" ? "Resale Cert. on file" : "Resale Cert. en archivo"}<br>Permit: ${BUSINESS.sellersPermit}</div>
+<div class="pay"><b>${tr(lang, "Formas de pago")}:</b><br>&bull; ${tr(lang, "Cheque a nombre de:")} ${BUSINESS.legalName}<br>&bull; Zelle: ${BUSINESS.zelle}<br>&bull; Venmo: ${BUSINESS.venmo}<br>&bull; ${tr(lang, "Efectivo contra entrega")}</div>
 ${order.notes ? `<div style="font-size:9px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
-<div class="sig"><div class="line"></div><div style="text-align:center">Firma del cliente</div></div>
-<div class="ftr">&iexcl;Gracias por su compra!<br>https://${BUSINESS.website}</div>
+<div class="sig"><div class="line"></div><div style="text-align:center">${tr(lang, "Firma del cliente / recibido")}</div></div>
+<div class="ftr">${tr(lang, "¡Gracias por tu compra!")}<br>https://${BUSINESS.website}</div>
 <script>window.onload=function(){window.print();}<\/script>
 </body></html>`;
     const w = window.open("", "_blank", "width=320,height=600");
@@ -816,77 +880,77 @@ ${order.notes ? `<div style="font-size:9px;margin-top:4px;font-style:italic">${o
 
       {/* Invoice number */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid #eee" }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#555" }}>INVOICE / FACTURA</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#555" }}>{tr(lang, "INVOICE / FACTURA")}</div>
         <div style={{ fontSize: 13, fontWeight: 700, color: "#C41E3A" }}>{invNum}</div>
       </div>
 
       {/* Bill to + dates */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 12, marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>BILL TO / FACTURAR A</div>
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>{tr(lang, "BILL TO / FACTURAR A")}</div>
           <div style={{ fontWeight: 700, marginTop: 3 }}>{cl?.name}</div>
           {cl?.address && <div style={{ color: "#777", fontSize: 11 }}>{cl.address}</div>}
-          {cl?.contact && <div style={{ color: "#777", fontSize: 11 }}>Atn: {cl.contact}</div>}
+          {cl?.contact && <div style={{ color: "#777", fontSize: 11 }}>{tr(lang, "Atn:")} {cl.contact}</div>}
           {cl?.phone && <div style={{ color: "#777", fontSize: 11 }}>{cl.phone}</div>}
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>FECHAS</div>
-          <div style={{ fontSize: 11, marginTop: 3 }}>Pedido: <b>{fmtD(order.date)}</b></div>
-          {order.deliveredDate && <div style={{ fontSize: 11 }}>Entrega: <b>{fmtD(order.deliveredDate)}</b></div>}
-          {dueDate && terms !== "Contado" && <div style={{ fontSize: 11, color: "#C41E3A" }}>Vence: <b>{fmtD(dueDate)}</b></div>}
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>{tr(lang, "FECHAS")}</div>
+          <div style={{ fontSize: 11, marginTop: 3 }}>{tr(lang, "Pedido")}: <b>{fmtD(order.date)}</b></div>
+          {order.deliveredDate && <div style={{ fontSize: 11 }}>{tr(lang, "Entrega")}: <b>{fmtD(order.deliveredDate)}</b></div>}
+          {dueDate && terms !== "Contado" && <div style={{ fontSize: 11, color: "#C41E3A" }}>{tr(lang, "Vence")}: <b>{fmtD(dueDate)}</b></div>}
           <div style={{ marginTop: 6 }}>
-            <Badge text={order.status} color={ST_CLR[order.status]} />
-            <span style={{ marginLeft: 4 }}><Badge text={terms} color={TERM_CLR[terms] || "#888"} /></span>
+            <Badge text={tr(lang, order.status)} color={ST_CLR[order.status]} />
+            <span style={{ marginLeft: 4 }}><Badge text={tr(lang, terms)} color={TERM_CLR[terms] || "#888"} /></span>
           </div>
         </div>
       </div>
 
       {/* Tabla productos */}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}>
-        <thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Producto</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Cant.</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Precio</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead>
+        <thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>{tr(lang, "Producto")}</th><th style={{ textAlign: "center", color: "#C41E3A" }}>{tr(lang, "Cant.")}</th><th style={{ textAlign: "right", color: "#C41E3A" }}>{tr(lang, "Precio")}</th><th style={{ textAlign: "right", color: "#C41E3A" }}>{tr(lang, "Total")}</th></tr></thead>
         <tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody>
       </table>
 
       {/* Totales */}
       <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>
-        {disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Descuento ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#999", fontSize: 11 }}><span>Sales Tax (Sale for Resale)</span><span>$0.00</span></div>
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>{tr(lang, "Subtotal")}</span><span>{fmt(sub)}</span></div>
+        {disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>{tr(lang, "Descuento")} ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#999", fontSize: 11 }}><span>{tr(lang, "Sales Tax (Sale for Resale)")}</span><span>$0.00</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>{tr(lang, "TOTAL")}</span><span>{fmt(order.total)}</span></div>
       </div>
 
       {/* Pago registrado si está pagada */}
       {order.status === "paid" && order.paidDate && (
         <div style={{ background: "#E8F5E8", border: "1px solid #1B7340", borderRadius: 6, padding: "8px 12px", marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ color: "#1B7340", fontWeight: 700, fontSize: 13 }}>✓ PAGADO el {fmtD(order.paidDate)}</div>
+          <div style={{ color: "#1B7340", fontWeight: 700, fontSize: 13 }}>✓ {tr(lang, "PAGADO el")} {fmtD(order.paidDate)}</div>
           {order.paymentMethod && <div style={{ fontSize: 12, color: "#555" }}>{order.paymentMethod}{order.paymentRef ? ` #${order.paymentRef}` : ""}</div>}
         </div>
       )}
 
-      {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notas: {order.notes}</div>}
+      {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>{tr(lang, "Notas:")} {order.notes}</div>}
 
       {/* Sale for Resale notice */}
       <div style={{ background: "#FFF8E1", border: "1px solid #F39C12", borderRadius: 6, padding: "8px 12px", marginTop: 12, fontSize: 11 }}>
-        <div style={{ fontWeight: 700, color: "#666" }}>SALE FOR RESALE / VENTA PARA REVENTA</div>
-        <div style={{ color: "#888", marginTop: 2 }}>Buyer's Resale Certificate on file. CA Seller's Permit: {BUSINESS.sellersPermit}</div>
+        <div style={{ fontWeight: 700, color: "#666" }}>{tr(lang, "SALE FOR RESALE / VENTA PARA REVENTA")}</div>
+        <div style={{ color: "#888", marginTop: 2 }}>{tr(lang, "Buyer's Resale Certificate on file. CA Seller's Permit:")} {BUSINESS.sellersPermit}</div>
       </div>
 
       {/* Formas de pago */}
       <div style={{ marginTop: 12, fontSize: 11, color: "#666" }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>Formas de pago</div>
-        <div>• Cheque a nombre de: <b>{BUSINESS.legalName}</b></div>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>{tr(lang, "Formas de pago")}</div>
+        <div>• {tr(lang, "Cheque a nombre de:")} <b>{BUSINESS.legalName}</b></div>
         <div>• Zelle: {BUSINESS.zelle}</div>
         <div>• Venmo: {BUSINESS.venmo}</div>
-        <div>• Efectivo contra entrega</div>
+        <div>• {tr(lang, "Efectivo contra entrega")}</div>
       </div>
 
       {/* Firmas */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30, marginTop: 24 }}>
-        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>Firma del cliente / recibido</div></div>
-        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>Firma del vendedor</div></div>
+        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>{tr(lang, "Firma del cliente / recibido")}</div></div>
+        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>{tr(lang, "Firma del vendedor")}</div></div>
       </div>
 
-      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>¡Gracias! • https://{BUSINESS.website}</div>
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>{tr(lang, "¡Gracias!")} • https://{BUSINESS.website}</div>
     </div></div>;
 };
 
@@ -1844,7 +1908,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.12" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.13" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -2041,7 +2105,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.12</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.13</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
