@@ -53,6 +53,31 @@ const PAYMENT_TERMS = ["Contado", "Crédito 7 días", "Crédito 15 días", "Cré
 const TERM_DAYS = { "Contado": 0, "Crédito 7 días": 7, "Crédito 15 días": 15, "Crédito 30 días": 30 };
 const TERM_CLR = { "Contado": "#1B7340", "Crédito 7 días": "#1A5276", "Crédito 15 días": "#D35400", "Crédito 30 días": "#6C3483" };
 const SCORE_CLR = (s) => s >= 90 ? "#1B7340" : s >= 70 ? "#D35400" : s >= 50 ? "#C41E3A" : "#888";
+
+// === BUSINESS LEGAL INFO — v5.12 — Para recibos legales en California ===
+const BUSINESS = {
+  legalName: "Dulce Sabor LLC",
+  tradeName: "DULCE SABOR",
+  tagline: "Dulces Mexicanos Auténticos • Norte de California",
+  address: "1123 W Standley St",
+  cityStateZip: "Ukiah, CA 95482",
+  phone: "(707) 360-7420",
+  email: "megapg.norcal@gmail.com",
+  website: "dulcesaborca.com",
+  contact: "José Flores",
+  ein: "42-1867709",
+  sellersPermit: "213-306080",
+  zelle: "megapg.norcal@gmail.com",
+  venmo: "@MegaPG-NorCal",
+};
+
+// Genera número de factura secuencial INV-YYYY-NNNN basado en posición de la orden
+const invoiceNumber = (order, allOrders) => {
+  const year = new Date(order.date).getFullYear();
+  const sameYear = allOrders.filter(o => new Date(o.date).getFullYear() === year).sort((a, b) => new Date(a.date) - new Date(b.date) || a.id.localeCompare(b.id));
+  const idx = sameYear.findIndex(o => o.id === order.id) + 1;
+  return `INV-${year}-${String(idx).padStart(4, "0")}`;
+};
 const LOW = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
 const FOLLOWUP_DAYS = 21;
@@ -614,11 +639,13 @@ const Reports = ({ orders, clients, purchases }) => {
   </div>;
 };
 
-const Receipt = ({ order, clients }) => {
+const Receipt = ({ order, clients, orders }) => {
   if (!order) return <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>Select from Orders tab.</p>;
   const cl = clients.find(c => c.id === order.clientId); const disc = order.discount || 0;
   const sub = order.items.reduce((s, it) => s + (pF(it.productId)?.price || 0) * it.qty, 0);
-  const orderNum = order.id.slice(-6).toUpperCase();
+  const invNum = invoiceNumber(order, orders || []);
+  const dueDate = cl ? orderDueDate(order, cl) : null;
+  const terms = cl?.paymentTerms || "Contado";
 
   const downloadPDF = () => {
     const doc = new jsPDF({ unit: "pt", format: "letter" });
@@ -626,23 +653,51 @@ const Receipt = ({ order, clients }) => {
     const mg = 50, cw = W - mg * 2;
     let y = 50;
     doc.setFillColor(196, 30, 58); doc.rect(0, 0, W, 6, "F");
+    // Header — nombre comercial
     doc.setFont("helvetica", "bold"); doc.setFontSize(22); doc.setTextColor(196, 30, 58);
-    doc.text("DULCE SABOR", W / 2, y, { align: "center" }); y += 18;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
-    doc.text("Dulces Mexicanos Aut\u00e9nticos \u2022 Norte de California", W / 2, y, { align: "center" }); y += 14;
-    doc.setFontSize(10); doc.setTextColor(60, 60, 60);
-    doc.text("Jos\u00e9 Flores \u2022 (707) 360-7420 \u2022 megapg.norcal@gmail.com", W / 2, y, { align: "center" }); y += 10;
-    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 20;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(30, 30, 30);
-    doc.text(cl?.name || "\u2014", mg, y); doc.text(`Pedido #${orderNum}`, W - mg, y, { align: "right" }); y += 15;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100, 100, 100);
-    if (cl?.address) doc.text(cl.address, mg, y);
-    doc.text(fmtD(order.date), W - mg, y, { align: "right" }); y += 14;
-    if (cl?.phone) doc.text(cl.phone, mg, y);
+    doc.text(BUSINESS.tradeName, W / 2, y, { align: "center" }); y += 16;
+    // Nombre legal
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(80, 80, 80);
+    doc.text(BUSINESS.legalName, W / 2, y, { align: "center" }); y += 11;
+    doc.setTextColor(120, 120, 120);
+    doc.text(BUSINESS.tagline, W / 2, y, { align: "center" }); y += 11;
+    doc.text(`${BUSINESS.address}, ${BUSINESS.cityStateZip}`, W / 2, y, { align: "center" }); y += 11;
+    doc.text(`${BUSINESS.contact} \u2022 ${BUSINESS.phone} \u2022 ${BUSINESS.email}`, W / 2, y, { align: "center" }); y += 11;
+    doc.setFontSize(8); doc.setTextColor(140, 140, 140);
+    doc.text(`EIN: ${BUSINESS.ein}  \u2022  CA Seller's Permit: ${BUSINESS.sellersPermit}`, W / 2, y, { align: "center" }); y += 14;
+    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 18;
+
+    // INVOICE label + número
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(60, 60, 60);
+    doc.text("INVOICE / FACTURA", mg, y);
+    doc.setFontSize(11); doc.setTextColor(196, 30, 58);
+    doc.text(invNum, W - mg, y, { align: "right" }); y += 18;
+
+    // Bill To + Fechas
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
+    doc.text("BILL TO / FACTURAR A", mg, y);
+    doc.text("FECHAS", W - mg - 160, y); y += 12;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(30, 30, 30);
+    doc.text(cl?.name || "\u2014", mg, y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(80, 80, 80);
+    doc.text(`Pedido: ${fmtD(order.date)}`, W - mg - 160, y); y += 12;
+    if (cl?.address) { doc.text(cl.address, mg, y); }
+    if (order.deliveredDate) doc.text(`Entrega: ${fmtD(order.deliveredDate)}`, W - mg - 160, y); y += 12;
+    if (cl?.contact) { doc.text(`Atn: ${cl.contact}`, mg, y); }
+    if (dueDate && terms !== "Contado") doc.text(`Vence: ${fmtD(dueDate)}`, W - mg - 160, y); y += 12;
+    if (cl?.phone) { doc.text(cl.phone, mg, y); y += 12; }
+
+    // Status badge + términos
+    y += 6;
     const sc = { pending: [211, 84, 0], delivered: [26, 82, 118], paid: [27, 115, 64] }[order.status] || [100, 100, 100];
-    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(sc[0], sc[1], sc[2]);
-    doc.text(order.status.toUpperCase(), W - mg, y, { align: "right" }); y += (cl?.phone ? 14 : 8) + 10;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(sc[0], sc[1], sc[2]);
+    doc.text(`ESTADO: ${order.status.toUpperCase()}`, mg, y);
+    doc.setTextColor(108, 52, 131);
+    doc.text(`Términos: ${terms}`, W - mg, y, { align: "right" }); y += 16;
+
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 16;
+
+    // Tabla productos
     doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(196, 30, 58);
     const cols = [mg, mg + cw * 0.50, mg + cw * 0.65, mg + cw * 0.82];
     doc.text("Producto", cols[0], y); doc.text("Cant.", cols[1], y, { align: "center" }); doc.text("Precio", cols[2], y, { align: "right" }); doc.text("Total", W - mg, y, { align: "right" }); y += 8;
@@ -650,49 +705,91 @@ const Receipt = ({ order, clients }) => {
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(40, 40, 40);
     order.items.forEach(it => { const p = pF(it.productId); doc.text(p?.name || it.productId, cols[0], y); doc.text(String(it.qty), cols[1], y, { align: "center" }); doc.text(fmt(p?.price), cols[2], y, { align: "right" }); doc.text(fmt((p?.price || 0) * it.qty), W - mg, y, { align: "right" }); y += 6; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.3); doc.line(mg, y, W - mg, y); y += 14; });
     y += 4; doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5); doc.line(mg + cw * 0.5, y, W - mg, y); y += 16;
+
+    // Totales
     doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(60, 60, 60);
-    doc.text("Subtotal", mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 18;
-    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`Descuento (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 18; }
+    doc.text("Subtotal", mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 16;
+    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`Descuento (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 16; }
+    // Sales tax line — siempre $0 porque vendemos para reventa
+    doc.setTextColor(120, 120, 120); doc.setFontSize(9);
+    doc.text("Sales Tax (Sale for Resale)", mg + cw * 0.5, y); doc.text("$0.00", W - mg, y, { align: "right" }); y += 14;
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg + cw * 0.5, y, W - mg, y); y += 20;
     doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(196, 30, 58);
-    doc.text("TOTAL", mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 14;
-    if (order.notes) { y += 10; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`Notas: ${order.notes}`, mg, y); y += 14; }
-    y += 10; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 16;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text("Formas de pago", mg, y); y += 14;
+    doc.text("TOTAL", mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 16;
+
+    // Si está pagada — info de pago
+    if (order.status === "paid" && order.paidDate) {
+      y += 8; doc.setFillColor(232, 245, 232); doc.rect(mg, y - 4, cw, 22, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(27, 115, 64);
+      doc.text(`✓ PAGADO el ${fmtD(order.paidDate)}`, mg + 8, y + 10);
+      if (order.paymentMethod) doc.text(`${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}`, W - mg - 8, y + 10, { align: "right" });
+      y += 28;
+    }
+
+    if (order.notes) { y += 6; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`Notas: ${order.notes}`, mg, y); y += 14; }
+
+    // Sale for Resale notice
+    y += 8; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 12;
+    doc.setFillColor(255, 248, 225); doc.rect(mg, y - 4, cw, 28, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(60, 60, 60);
+    doc.text("SALE FOR RESALE / VENTA PARA REVENTA", mg + 8, y + 8);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(100, 100, 100);
+    doc.text(`Buyer's Resale Certificate on file. Seller's Permit: ${BUSINESS.sellersPermit}`, mg + 8, y + 20);
+    y += 36;
+
+    // Formas de pago
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text("Formas de pago", mg, y); y += 13;
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100, 100, 100);
-    ["Efectivo contra entrega", "Zelle: megapg.norcal@gmail.com", "Venmo: @MegaPG-NorCal", "Cheque a nombre de: Dulce Sabor LLC"].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 13; });
-    y += 10; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 14;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(160, 160, 160);
-    doc.text("\u00a1Gracias por tu compra!", W / 2, y, { align: "center" }); y += 12;
-    doc.text("https://dulcesaborca.com", W / 2, y, { align: "center" });
+    [`Cheque a nombre de: ${BUSINESS.legalName}`, `Zelle: ${BUSINESS.zelle}`, `Venmo: ${BUSINESS.venmo}`, "Efectivo contra entrega"].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 12; });
+
+    // Línea de firma
+    y += 12; doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.5);
+    doc.line(mg, y, mg + cw * 0.45, y); doc.line(mg + cw * 0.55, y, W - mg, y); y += 10;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(140, 140, 140);
+    doc.text("Firma del cliente / recibido", mg, y); doc.text("Firma del vendedor", mg + cw * 0.55, y); y += 16;
+
+    // Footer
+    doc.setFontSize(8); doc.setTextColor(160, 160, 160);
+    doc.text("\u00a1Gracias por tu compra! \u2022 https://" + BUSINESS.website, W / 2, y, { align: "center" });
     doc.setFillColor(196, 30, 58); doc.rect(0, doc.internal.pageSize.getHeight() - 6, W, 6, "F");
-    doc.save(`DulceSabor_${orderNum}_${order.date}.pdf`);
+    doc.save(`${invNum}_${(cl?.name || "cliente").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
   };
 
   const printThermal = () => {
     const items = order.items.map(it => { const p = pF(it.productId); return `<tr><td style="padding:2px 0">${p?.name || it.productId}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt((p?.price || 0) * it.qty * (1 - disc))}</td></tr>`; }).join("");
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>Print</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:monospace,sans-serif;width:72mm;font-size:12px;color:#000;padding:2mm}
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:monospace,sans-serif;width:72mm;font-size:11px;color:#000;padding:2mm}
 @page{size:80mm auto;margin:0}
 @media print{body{width:72mm;padding:2mm}}.hdr{text-align:center;border-bottom:2px dashed #000;padding-bottom:4px;margin-bottom:6px}
-.hdr h1{font-size:16px;font-weight:900;letter-spacing:1px}.hdr p{font-size:10px}
-.info{display:flex;justify-content:space-between;margin-bottom:6px;font-size:11px}
+.hdr h1{font-size:16px;font-weight:900;letter-spacing:1px}.hdr p{font-size:9px;line-height:1.3}
+.legal{font-size:8px;color:#000;text-align:center;border-bottom:1px dashed #000;padding-bottom:3px;margin-bottom:6px;line-height:1.3}
+.info{display:flex;justify-content:space-between;margin-bottom:4px;font-size:10px}
+.info2{font-size:9px;margin-bottom:6px;line-height:1.4}
 table{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0}th{text-align:left;border-bottom:1px dashed #000;padding:2px 0;font-size:10px}
 td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;font-size:11px}
 .tot .line{display:flex;justify-content:space-between;padding:1px 0}
-.tot .grand{font-size:16px;font-weight:900;border-top:2px solid #000;margin-top:4px;padding-top:4px}
-.pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:10px}
+.tot .grand{font-size:15px;font-weight:900;border-top:2px solid #000;margin-top:4px;padding-top:4px}
+.resale{border:1px dashed #000;padding:4px;margin-top:6px;font-size:9px;text-align:center;font-weight:700}
+.pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px;line-height:1.4}
+.sig{margin-top:10px;font-size:9px}.sig .line{border-bottom:1px solid #000;height:18px}
 .ftr{text-align:center;border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px}
+.paid{background:#000;color:#fff;text-align:center;padding:3px;margin-top:6px;font-weight:900;font-size:11px}
 </style></head><body>
-<div class="hdr"><h1>DULCE SABOR</h1><p>LLC</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
-<div class="info"><div><b>${cl?.name || ""}</b>${cl?.phone ? `<br>${cl.phone}` : ""}</div><div style="text-align:right"><b>#${orderNum}</b><br>${fmtD(order.date)}</div></div>
+<div class="hdr"><h1>${BUSINESS.tradeName}</h1><p><b>${BUSINESS.legalName}</b></p><p>${BUSINESS.address}<br>${BUSINESS.cityStateZip}</p><p>${BUSINESS.contact} &bull; ${BUSINESS.phone}</p><p>${BUSINESS.email}</p></div>
+<div class="legal">EIN: ${BUSINESS.ein}<br>CA Seller's Permit: ${BUSINESS.sellersPermit}</div>
+<div class="info"><div><b>INVOICE</b></div><div><b>${invNum}</b></div></div>
+<div class="info2"><b>${cl?.name || ""}</b>${cl?.address ? `<br>${cl.address}` : ""}${cl?.contact ? `<br>Atn: ${cl.contact}` : ""}${cl?.phone ? `<br>${cl.phone}` : ""}<br>Pedido: ${fmtD(order.date)}${order.deliveredDate ? `<br>Entrega: ${fmtD(order.deliveredDate)}` : ""}${dueDate && terms !== "Contado" ? `<br>Vence: ${fmtD(dueDate)} (${terms})` : `<br>Términos: ${terms}`}</div>
 <table><thead><tr><th>Producto</th><th style="text-align:center">Cant.</th><th style="text-align:right">Total</th></tr></thead><tbody>${items}</tbody></table>
 <div class="tot"><div class="line"><span>Subtotal</span><span>${fmt(sub)}</span></div>
 ${disc > 0 ? `<div class="line"><span>Desc. ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
+<div class="line" style="font-size:9px;color:#666"><span>Sales Tax (Resale)</span><span>$0.00</span></div>
 <div class="line grand"><span>TOTAL</span><span>${fmt(order.total)}</span></div></div>
-<div class="pay"><b>Pago:</b> Efectivo &bull; Zelle &bull; Venmo &bull; Cheque</div>
-${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
-<div class="ftr">&iexcl;Gracias por su compra!<br>https://dulcesaborca.com</div>
+${order.status === "paid" && order.paidDate ? `<div class="paid">PAGADO ${fmtD(order.paidDate)}${order.paymentMethod ? ` &bull; ${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}` : ""}</div>` : ""}
+<div class="resale">SALE FOR RESALE<br>Resale Cert. on file<br>Permit: ${BUSINESS.sellersPermit}</div>
+<div class="pay"><b>Formas de pago:</b><br>&bull; Cheque: ${BUSINESS.legalName}<br>&bull; Zelle: ${BUSINESS.zelle}<br>&bull; Venmo: ${BUSINESS.venmo}<br>&bull; Efectivo</div>
+${order.notes ? `<div style="font-size:9px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
+<div class="sig"><div class="line"></div><div style="text-align:center">Firma del cliente</div></div>
+<div class="ftr">&iexcl;Gracias por su compra!<br>https://${BUSINESS.website}</div>
 <script>window.onload=function(){window.print();}<\/script>
 </body></html>`;
     const w = window.open("", "_blank", "width=320,height=600");
@@ -706,13 +803,90 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
       {cl?.phone && <WaBtn phone={cl.phone} msg={waReceipt(order, cl)} label="Enviar por WhatsApp" />}
       {cl?.phone && order.status !== "paid" && <WaBtn phone={cl.phone} msg={waPayment(order, cl)} label="Recordatorio de pago" />}
     </div>
-    <div style={{ maxWidth: 500, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
-      <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}><div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>DULCE SABOR</div><div style={{ fontSize: 11, color: "#777" }}>Dulces Mexicanos Auténticos • Norte de California</div><div style={{ fontSize: 12, marginTop: 4 }}>José Flores • (707) 360-7420 • megapg.norcal@gmail.com</div></div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 12 }}><div><b>{cl?.name}</b>{cl?.address && <div style={{ color: "#777" }}>{cl.address}</div>}{cl?.phone && <div style={{ color: "#777" }}>{cl.phone}</div>}</div><div style={{ textAlign: "right" }}><b>#{order.id.slice(-6).toUpperCase()}</b><div style={{ color: "#777" }}>{fmtD(order.date)}</div><Badge text={order.status} color={ST_CLR[order.status]} /></div></div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Producto</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Cant.</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Precio</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody></table>
-      <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>{disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Descuento ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}<div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div></div>
+    <div style={{ maxWidth: 540, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
+      {/* Header */}
+      <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: "#C41E3A", letterSpacing: 1 }}>{BUSINESS.tradeName}</div>
+        <div style={{ fontSize: 11, color: "#555", marginTop: 2, fontWeight: 600 }}>{BUSINESS.legalName}</div>
+        <div style={{ fontSize: 10, color: "#888" }}>{BUSINESS.tagline}</div>
+        <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>{BUSINESS.address}, {BUSINESS.cityStateZip}</div>
+        <div style={{ fontSize: 11, color: "#555" }}>{BUSINESS.contact} • {BUSINESS.phone} • {BUSINESS.email}</div>
+        <div style={{ fontSize: 9, color: "#999", marginTop: 4 }}>EIN: {BUSINESS.ein} • CA Seller's Permit: {BUSINESS.sellersPermit}</div>
+      </div>
+
+      {/* Invoice number */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid #eee" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#555" }}>INVOICE / FACTURA</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#C41E3A" }}>{invNum}</div>
+      </div>
+
+      {/* Bill to + dates */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 12, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>BILL TO / FACTURAR A</div>
+          <div style={{ fontWeight: 700, marginTop: 3 }}>{cl?.name}</div>
+          {cl?.address && <div style={{ color: "#777", fontSize: 11 }}>{cl.address}</div>}
+          {cl?.contact && <div style={{ color: "#777", fontSize: 11 }}>Atn: {cl.contact}</div>}
+          {cl?.phone && <div style={{ color: "#777", fontSize: 11 }}>{cl.phone}</div>}
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>FECHAS</div>
+          <div style={{ fontSize: 11, marginTop: 3 }}>Pedido: <b>{fmtD(order.date)}</b></div>
+          {order.deliveredDate && <div style={{ fontSize: 11 }}>Entrega: <b>{fmtD(order.deliveredDate)}</b></div>}
+          {dueDate && terms !== "Contado" && <div style={{ fontSize: 11, color: "#C41E3A" }}>Vence: <b>{fmtD(dueDate)}</b></div>}
+          <div style={{ marginTop: 6 }}>
+            <Badge text={order.status} color={ST_CLR[order.status]} />
+            <span style={{ marginLeft: 4 }}><Badge text={terms} color={TERM_CLR[terms] || "#888"} /></span>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabla productos */}
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}>
+        <thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Producto</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Cant.</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Precio</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead>
+        <tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody>
+      </table>
+
+      {/* Totales */}
+      <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>
+        {disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Descuento ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#999", fontSize: 11 }}><span>Sales Tax (Sale for Resale)</span><span>$0.00</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div>
+      </div>
+
+      {/* Pago registrado si está pagada */}
+      {order.status === "paid" && order.paidDate && (
+        <div style={{ background: "#E8F5E8", border: "1px solid #1B7340", borderRadius: 6, padding: "8px 12px", marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ color: "#1B7340", fontWeight: 700, fontSize: 13 }}>✓ PAGADO el {fmtD(order.paidDate)}</div>
+          {order.paymentMethod && <div style={{ fontSize: 12, color: "#555" }}>{order.paymentMethod}{order.paymentRef ? ` #${order.paymentRef}` : ""}</div>}
+        </div>
+      )}
+
       {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notas: {order.notes}</div>}
-      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>¡Gracias! • https://dulcesaborca.com</div>
+
+      {/* Sale for Resale notice */}
+      <div style={{ background: "#FFF8E1", border: "1px solid #F39C12", borderRadius: 6, padding: "8px 12px", marginTop: 12, fontSize: 11 }}>
+        <div style={{ fontWeight: 700, color: "#666" }}>SALE FOR RESALE / VENTA PARA REVENTA</div>
+        <div style={{ color: "#888", marginTop: 2 }}>Buyer's Resale Certificate on file. CA Seller's Permit: {BUSINESS.sellersPermit}</div>
+      </div>
+
+      {/* Formas de pago */}
+      <div style={{ marginTop: 12, fontSize: 11, color: "#666" }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Formas de pago</div>
+        <div>• Cheque a nombre de: <b>{BUSINESS.legalName}</b></div>
+        <div>• Zelle: {BUSINESS.zelle}</div>
+        <div>• Venmo: {BUSINESS.venmo}</div>
+        <div>• Efectivo contra entrega</div>
+      </div>
+
+      {/* Firmas */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30, marginTop: 24 }}>
+        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>Firma del cliente / recibido</div></div>
+        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>Firma del vendedor</div></div>
+      </div>
+
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>¡Gracias! • https://{BUSINESS.website}</div>
     </div></div>;
 };
 
@@ -1670,7 +1844,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.11" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.12" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1867,7 +2041,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.11</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.12</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -1885,7 +2059,7 @@ export default function App() {
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
       {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
-      {tab === "receipt" && <Receipt order={ro} clients={clients} />}
+      {tab === "receipt" && <Receipt order={ro} clients={clients} orders={orders} />}
       {tab === "cobros" && <Cobros clients={clients} orders={orders} setOrders={setOrders} saveAll={sv} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
     </div>
