@@ -48,86 +48,6 @@ const PRODUCTS_SEEN = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/
 const TIER_DISC = { Lista: 0, Bronce: 0.03125, Plata: 0.0625, Oro: 0.125 };
 const TIER_CLR = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
 const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
-// PAYMENT TERMS — v5.11
-const PAYMENT_TERMS = ["Contado", "Crédito 7 días", "Crédito 15 días", "Crédito 30 días"];
-const TERM_DAYS = { "Contado": 0, "Crédito 7 días": 7, "Crédito 15 días": 15, "Crédito 30 días": 30 };
-const TERM_CLR = { "Contado": "#1B7340", "Crédito 7 días": "#1A5276", "Crédito 15 días": "#D35400", "Crédito 30 días": "#6C3483" };
-
-// LANGUAGE — v5.13 — Bilingual receipts and WhatsApp messages
-const LANGUAGES = ["Español", "English"];
-const LANG_CLR = { "Español": "#C41E3A", "English": "#1A5276" };
-// Translation dictionary — keys in Spanish, values in English
-const T = {
-  "Español": (k) => k, // identity — Spanish is the source
-  "English": (k) => ({
-    // Receipt headers
-    "INVOICE / FACTURA": "INVOICE",
-    "BILL TO / FACTURAR A": "BILL TO",
-    "FECHAS": "DATES",
-    "Pedido": "Order date",
-    "Entrega": "Delivery date",
-    "Vence": "Due date",
-    "Términos": "Terms",
-    "ESTADO": "STATUS",
-    "Producto": "Product",
-    "Cant.": "Qty",
-    "Precio": "Price",
-    "Total": "Total",
-    "Subtotal": "Subtotal",
-    "Descuento": "Discount",
-    "Sales Tax (Sale for Resale)": "Sales Tax (Sale for Resale)",
-    "TOTAL": "TOTAL",
-    "PAGADO el": "PAID on",
-    "SALE FOR RESALE / VENTA PARA REVENTA": "SALE FOR RESALE",
-    "Buyer's Resale Certificate on file. CA Seller's Permit:": "Buyer's Resale Certificate on file. CA Seller's Permit:",
-    "Formas de pago": "Payment methods",
-    "Cheque a nombre de:": "Check payable to:",
-    "Efectivo contra entrega": "Cash on delivery",
-    "Firma del cliente / recibido": "Customer signature / received",
-    "Firma del vendedor": "Seller signature",
-    "Atn:": "Attn:",
-    "Notas:": "Notes:",
-    "¡Gracias!": "Thank you!",
-    "¡Gracias por tu compra!": "Thank you for your business!",
-    // Payment terms
-    "Contado": "Net on receipt",
-    "Crédito 7 días": "Net 7",
-    "Crédito 15 días": "Net 15",
-    "Crédito 30 días": "Net 30",
-    // Order status
-    "pending": "pending",
-    "delivered": "delivered",
-    "paid": "paid",
-  }[k] || k),
-};
-const tr = (lang, key) => (T[lang] || T["Español"])(key);
-
-const SCORE_CLR = (s) => s >= 90 ? "#1B7340" : s >= 70 ? "#D35400" : s >= 50 ? "#C41E3A" : "#888";
-
-// === BUSINESS LEGAL INFO — v5.12 — Para recibos legales en California ===
-const BUSINESS = {
-  legalName: "Dulce Sabor LLC",
-  tradeName: "DULCE SABOR",
-  tagline: "Dulces Mexicanos Auténticos • Norte de California",
-  address: "1123 W Standley St",
-  cityStateZip: "Ukiah, CA 95482",
-  phone: "(707) 360-7420",
-  email: "megapg.norcal@gmail.com",
-  website: "dulcesaborca.com",
-  contact: "José Flores",
-  ein: "42-1867709",
-  sellersPermit: "213-306080",
-  zelle: "megapg.norcal@gmail.com",
-  venmo: "@MegaPG-NorCal",
-};
-
-// Genera número de factura secuencial INV-YYYY-NNNN basado en posición de la orden
-const invoiceNumber = (order, allOrders) => {
-  const year = new Date(order.date).getFullYear();
-  const sameYear = allOrders.filter(o => new Date(o.date).getFullYear() === year).sort((a, b) => new Date(a.date) - new Date(b.date) || a.id.localeCompare(b.id));
-  const idx = sameYear.findIndex(o => o.id === order.id) + 1;
-  return `INV-${year}-${String(idx).padStart(4, "0")}`;
-};
 const LOW = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
 const FOLLOWUP_DAYS = 21;
@@ -142,6 +62,9 @@ const POSTDEL_MAX_DAYS = 21;   // Latest: after this, reorder reminder takes ove
 const POSTDEL_URGENT_DAYS = 14; // "Last chance" threshold
 // WELCOME NEW CLIENT SETTINGS
 const WELCOME_MAX_DAYS = 14;   // Window after first order to send welcome
+// COMMISSION / REPRESENTATIVES (v5.11) — Contrato Representante §1
+const ACTIVE_ACCOUNT_DAYS = 90;         // Cuenta Activa = compra en últimos 90 días
+const NEW_ACCOUNT_LOOKBACK_DAYS = 365;  // Cuenta Nueva = sin compra de Dulce Sabor en los 12 meses previos
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -268,72 +191,26 @@ const calcClientCycle = (clientOrders) => {
   return Math.max(7, Math.round(avg));
 };
 
-// PAYMENT SCORE — v5.11 — evalúa puntualidad del cliente (0-100)
-// Lógica: empieza en 100. Por cada orden atrasada vs. sus términos, baja puntos según los días de retraso.
-// Sin historial suficiente → null (no hay datos para juzgar)
-const calcPaymentScore = (client, clientOrders) => {
-  const term = TERM_DAYS[client?.paymentTerms] ?? 0;
-  // Solo contamos órdenes que ya tienen resolución (pagadas o claramente atrasadas)
-  const evaluable = clientOrders.filter(o => o.status === "paid" || o.status === "delivered");
-  if (evaluable.length < 2) return null; // Muy pocos datos
-  let score = 100;
-  let latePenalty = 0;
-  evaluable.forEach(o => {
-    if (o.status === "paid" && o.paidDate) {
-      const delivered = o.deliveredDate || o.date;
-      const daysToPay = Math.max(0, (new Date(o.paidDate) - new Date(delivered)) / 86400000);
-      const overdue = Math.max(0, daysToPay - term);
-      if (overdue > 0) latePenalty += Math.min(15, overdue); // máx 15 pts por orden tardía
-    } else if (o.status === "delivered") {
-      // Entregada pero no pagada → revisar si ya venció
-      const delivered = o.deliveredDate || o.date;
-      const daysSinceDelivery = dSince(delivered);
-      const overdue = Math.max(0, daysSinceDelivery - term);
-      if (overdue > 0) latePenalty += Math.min(20, overdue); // actualmente atrasada = más castigo
-    }
-  });
-  score = Math.max(0, Math.round(score - latePenalty / evaluable.length * 3));
-  return Math.min(100, score);
-};
-
-// DUE DATE — fecha en que se debe pagar una orden según los términos del cliente
-const orderDueDate = (order, client) => {
-  const term = TERM_DAYS[client?.paymentTerms] ?? 0;
-  const baseDate = order.deliveredDate || order.date;
-  const due = new Date(baseDate);
-  due.setDate(due.getDate() + term);
-  return due;
-};
-
-const daysUntilDue = (order, client) => {
-  const due = orderDueDate(order, client);
-  return Math.floor((due.getTime() - Date.now()) / 86400000);
+// Cuenta Activa según §1 contrato: compra cobrada (paid) en los últimos ACTIVE_ACCOUNT_DAYS días
+const isActiveAccount = (clientId, orders) => {
+  const paid = orders.filter(o => o.clientId === clientId && o.status === "paid" && o.paidDate);
+  if (paid.length === 0) return false;
+  const last = paid.reduce((m, o) => new Date(o.paidDate) > new Date(m.paidDate) ? o : m, paid[0]);
+  return dSince(last.paidDate) <= ACTIVE_ACCOUNT_DAYS;
 };
 
 // WhatsApp helpers
 const cleanPhone = (ph) => { if (!ph) return ""; return ph.replace(/[^0-9]/g, "").replace(/^1?(\d{10})$/, "1$1"); };
 const waLink = (phone, msg) => `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(msg)}`;
 const waOrder = (order, client) => {
-  const isEN = client?.language === "English";
   const items = order.items.map(it => { const p = pF(it.productId); return `  • ${p?.name || it.productId} x${it.qty} = ${fmt((p?.price || 0) * it.qty * (1 - (order.discount || 0)))}`; }).join("\n");
-  if (isEN) {
-    return `*DULCE SABOR*\nOrder #${order.id.slice(-6).toUpperCase()}\nDate: ${fmtD(order.date)}\n\nHi ${client?.contact || client?.name || ""},\n\nHere is your order confirmation:\n\n${items}\n${order.discount > 0 ? `\nDiscount: ${Math.round(order.discount * 100)}% (${client?.tier})\n` : ""}${order.foDisc ? `1st order discount: ${order.foDisc.tier} cases — $${order.foDisc.price}/case Slaps\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nPayment: Cash, Zelle, Venmo or Check\nQuestions? Call me at (707) 360-7420\n\nOrder online: https://dulcesaborca.com\n\nThank you!\n— José Flores, Dulce Sabor NorCal`;
-  }
-  return `*DULCE SABOR*\nPedido #${order.id.slice(-6).toUpperCase()}\nFecha: ${fmtD(order.date)}\n\nHola ${client?.contact || client?.name || ""},\n\nAquí está la confirmación de tu pedido:\n\n${items}\n${order.discount > 0 ? `\nDescuento: ${Math.round(order.discount * 100)}% (${client?.tier})\n` : ""}${order.foDisc ? `Descuento 1ª orden: ${order.foDisc.tier} cajas — $${order.foDisc.price}/caja Slaps\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nFormas de pago: Efectivo, Zelle, Venmo o Cheque\n¿Preguntas? Llámame al (707) 360-7420\n\nOrdena en línea: https://dulcesaborca.com\n\n¡Gracias!\n— José Flores, Dulce Sabor NorCal`;
+  return `*DULCE SABOR*\nPedido #${order.id.slice(-6).toUpperCase()}\nFecha: ${fmtD(order.date)}\n\nHola ${client?.contact || client?.name || ""},\n\nAquí está la confirmación de tu pedido:\n\n${items}\n${order.discount > 0 ? `\nDescuento: ${Math.round(order.discount * 100)}% (${client?.tier})\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nFormas de pago: Efectivo, Zelle, Venmo o Cheque\n¿Preguntas? Llámame al (707) 360-7420\n\nOrdena en línea: https://dulcesaborca.com\n\n¡Gracias!\n— José Flores, Dulce Sabor NorCal`;
 };
 const waReceipt = (order, client) => {
-  const isEN = client?.language === "English";
   const items = order.items.map(it => { const p = pF(it.productId); return `${p?.name || it.productId} x${it.qty}`; }).join(", ");
-  if (isEN) {
-    return `*DULCE SABOR — Receipt #${order.id.slice(-6).toUpperCase()}*\nDate: ${fmtD(order.date)}\nCustomer: ${client?.name || ""}\nItems: ${items}\n${order.discount > 0 ? `Discount: ${Math.round(order.discount * 100)}%\n` : ""}${order.foDisc ? `1st order discount: ${order.foDisc.tier} cases — $${order.foDisc.price}/case Slaps\n` : ""}*Total: ${fmt(order.total)}*\nStatus: ${order.status.toUpperCase()}\n\nThank you for your business!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
-  }
-  return `*DULCE SABOR — Recibo #${order.id.slice(-6).toUpperCase()}*\nFecha: ${fmtD(order.date)}\nCliente: ${client?.name || ""}\nArtículos: ${items}\n${order.discount > 0 ? `Descuento: ${Math.round(order.discount * 100)}%\n` : ""}${order.foDisc ? `Descuento 1ª orden: ${order.foDisc.tier} cajas — $${order.foDisc.price}/caja Slaps\n` : ""}*Total: ${fmt(order.total)}*\nEstado: ${order.status.toUpperCase()}\n\n¡Gracias por tu compra!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
+  return `*DULCE SABOR — Recibo #${order.id.slice(-6).toUpperCase()}*\nFecha: ${fmtD(order.date)}\nCliente: ${client?.name || ""}\nArtículos: ${items}\n${order.discount > 0 ? `Descuento: ${Math.round(order.discount * 100)}%\n` : ""}*Total: ${fmt(order.total)}*\nEstado: ${order.status.toUpperCase()}\n\n¡Gracias por tu compra!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
 };
 const waPayment = (order, client) => {
-  const isEN = client?.language === "English";
-  if (isEN) {
-    return `Hi ${client?.contact || client?.name || ""},\n\nFriendly reminder about your order #${order.id.slice(-6).toUpperCase()} from ${fmtD(order.date)} for *${fmt(order.total)}*.\n\nStatus: ${order.status === "delivered" ? "Delivered — payment pending" : "Pending"}\n\nPayment options:\n• Cash on next visit\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Check payable to Dulce Sabor LLC\n\nQuestions? Call me at (707) 360-7420\n\nThank you!\n— José Flores, Dulce Sabor`;
-  }
   return `Hola ${client?.contact || client?.name || ""},\n\nRecordatorio amistoso sobre tu pedido #${order.id.slice(-6).toUpperCase()} del ${fmtD(order.date)} por *${fmt(order.total)}*.\n\nEstado: ${order.status === "delivered" ? "Entregado — pago pendiente" : "Pendiente"}\n\nFormas de pago:\n• Efectivo en la próxima visita\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Cheque a nombre de Dulce Sabor LLC\n\n¿Preguntas? Llámame al (707) 360-7420\n\n¡Gracias!\n— José Flores, Dulce Sabor`;
 };
 const WaBtn = ({ phone, msg, label, small }) => <a href={waLink(phone, msg)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: small ? "3px 8px" : "6px 12px", background: "#25D366", color: "#fff", borderRadius: 6, fontSize: small ? 10 : 12, fontWeight: 600, textDecoration: "none", cursor: "pointer", whiteSpace: "nowrap" }}>{label || "WhatsApp"}</a>;
@@ -373,8 +250,8 @@ const Dashboard = ({ clients, orders, inventory }) => {
   </div>;
 };
 
-const Clients = ({ clients, setClients, orders, saveAll }) => {
-  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", ownerGroup: "", paymentTerms: "Contado", creditLimit: "", language: "Español", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
+const Clients = ({ clients, setClients, orders, saveAll, representatives }) => {
+  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false, representativeId: "", priorHistoryBeforeRep: false };
   const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null);
   const [form, setForm] = useState(emptyForm); const [search, setSearch] = useState("");
   const [showWebSection, setShowWebSection] = useState(false); const [uploading, setUploading] = useState(false); const [syncMsg, setSyncMsg] = useState(null); const [bulkSyncing, setBulkSyncing] = useState(false);
@@ -442,15 +319,7 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
     setTimeout(() => setSyncMsg(null), 5000);
   };
 
-  const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()) || c.ownerGroup?.toLowerCase().includes(search.toLowerCase()));
-
-  // Agrupar por ownerGroup para mostrar tarjeta resumen arriba del grupo
-  const groupsSeen = new Set();
-  const filWithGroupMarker = fil.map(c => {
-    const isFirstOfGroup = c.ownerGroup && !groupsSeen.has(c.ownerGroup);
-    if (c.ownerGroup) groupsSeen.add(c.ownerGroup);
-    return { ...c, _isFirstOfGroup: isFirstOfGroup };
-  });
+  const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()));
 
   return <div>
     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
@@ -462,43 +331,30 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
     </div>
     {syncMsg && !sf && <div style={{ padding: "8px 12px", marginBottom: 10, background: syncMsg.ok ? "#E8F5E9" : "#FDE8E8", color: syncMsg.ok ? "#1B7340" : "#C41E3A", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{syncMsg.text}</div>}
     {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No clients. Click "+ New client".</p>}
-    {filWithGroupMarker.map(c => {
+    {fil.map(c => {
       const co = orders.filter(o => o.clientId === c.id);
       const last = co.length > 0 ? co.sort((a, b) => new Date(b.date) - new Date(a.date))[0] : null;
       const ts = co.reduce((s, o) => s + (o.total || 0), 0);
       const days = last ? dSince(last.date) : null;
       const fu = days !== null && days > FOLLOWUP_DAYS;
       const publicInactive = c.showOnWebsite && (days === null || days > PUBLIC_INACTIVE_DAYS);
-      const score = calcPaymentScore(c, co);
-      const owedNow = co.filter(o => o.status !== "paid").reduce((s, o) => s + (o.total || 0), 0);
-      // Indicador de grupo (misma dueña)
-      const groupSiblings = c.ownerGroup ? clients.filter(x => x.ownerGroup === c.ownerGroup).length : 0;
-      return <div key={c.id}>
-        {c._isFirstOfGroup && groupSiblings > 1 && <div style={{ fontSize: 11, fontWeight: 700, color: "#6C3483", marginTop: 8, marginBottom: 4, padding: "2px 8px" }}>👥 Grupo: {c.ownerGroup} ({groupSiblings} sucursales)</div>}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: publicInactive ? "#FFF8E1" : fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderLeft: c.ownerGroup ? "4px solid #6C3483" : "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
-              <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
-              <Badge text={c.tier} color={TIER_CLR[c.tier]} />
-              {c.zone && <Badge text={c.zone} color="#6C3483" />}
-              {c.language === "English" && <Badge text="EN" color={LANG_CLR["English"]} />}
-              {c.paymentTerms && c.paymentTerms !== "Contado" && <Badge text={c.paymentTerms} color={TERM_CLR[c.paymentTerms]} />}
-              {score !== null && <Badge text={`Score ${score}`} color={SCORE_CLR(score)} />}
-              {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
-              {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
-              {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
-            </div>
-            <div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div>
+      return <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: publicInactive ? "#FFF8E1" : fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
+            <Badge text={c.tier} color={TIER_CLR[c.tier]} />
+            {c.zone && <Badge text={c.zone} color="#6C3483" />}
+            {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
+            {c.representativeId && <Badge text={`🧑‍💼 ${((representatives || []).find(x => x.id === c.representativeId)?.name || "Rep").split(" ")[0]}`} color="#6C3483" />}
+            {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
+            {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
           </div>
-          <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div>
-            <div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div>
-            {owedNow > 0 && <div style={{ fontSize: 11, color: "#C41E3A", fontWeight: 700 }}>Debe: {fmt(owedNow)}</div>}
-          </div>
-          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            {c.phone && <WaBtn phone={c.phone} msg={`Hola ${c.contact || c.name}, soy José de Dulce Sabor.\n\n¿Cómo van las ventas de Slaps? ¿Listo para un reorden?\n\nOrdena en línea: https://dulcesaborca.com\n(707) 360-7420`} label="WA" small />}
-            <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn>
-          </div>
+          <div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div>
+        </div>
+        <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div><div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div></div>
+        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+          {c.phone && <WaBtn phone={c.phone} msg={`Hola ${c.contact || c.name}, soy José de Dulce Sabor.\n\n¿Cómo van las ventas de Slaps? ¿Listo para un reorden?\n\nOrdena en línea: https://dulcesaborca.com\n(707) 360-7420`} label="WA" small />}
+          <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn>
         </div>
       </div>;
     })}
@@ -511,17 +367,17 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
         <Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} />
         <Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" />
       </div>
-      {/* === SUCURSALES, CRÉDITO E IDIOMA — v5.13 === */}
-      <div style={{ background: "#F8F4FF", borderRadius: 8, padding: "10px 14px", marginTop: 6, marginBottom: 6, borderLeft: "4px solid #6C3483" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#6C3483", marginBottom: 6 }}>Sucursal, términos de pago e idioma</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "0 12px" }}>
-          <Inp label="Grupo (mismo dueño)" value={form.ownerGroup} onChange={v => setForm(p => ({ ...p, ownerGroup: v }))} placeholder="Ej: Luis Hdez" />
-          <Inp label="Términos de pago" value={form.paymentTerms} onChange={v => setForm(p => ({ ...p, paymentTerms: v }))} options={PAYMENT_TERMS} />
-          <Inp label="Límite de crédito ($)" type="number" value={form.creditLimit} onChange={v => setForm(p => ({ ...p, creditLimit: v }))} placeholder="opcional" />
-          <Inp label="Idioma del cliente" value={form.language} onChange={v => setForm(p => ({ ...p, language: v }))} options={LANGUAGES} />
-        </div>
-        <div style={{ fontSize: 11, color: "#777", lineHeight: 1.4 }}>El idioma controla el recibo y los mensajes de WhatsApp para este cliente. Si tienes varias sucursales del mismo dueño, pon el mismo "Grupo".</div>
+      <div style={{ marginBottom: 10 }}>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>Representante asignado</label>
+        <select value={form.representativeId || ""} onChange={e => setForm(p => ({ ...p, representativeId: e.target.value, priorHistoryBeforeRep: e.target.value ? p.priorHistoryBeforeRep : false }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}>
+          <option value="">José directo (sin representante)</option>
+          {(representatives || []).filter(r => r.active).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
       </div>
+      {form.representativeId && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10, padding: 10, background: "#FFF8E1", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
+        <input type="checkbox" checked={!!form.priorHistoryBeforeRep} onChange={e => setForm(p => ({ ...p, priorHistoryBeforeRep: e.target.checked }))} style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }} />
+        <span>Este cliente <b>ya compraba a Dulce Sabor antes</b> (dentro de los últimos 12 meses) de que lo abriera el representante. Si está marcado, no califica como Cuenta Nueva (§1 contrato) y la comisión será 5% residual desde el primer pedido.</span>
+      </label>}
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
 
       {/* === SECCIÓN PUBLICAR EN SITIO WEB (v5.10) === */}
@@ -589,18 +445,7 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
     const warnings = getStockWarnings();
     if (warnings.length > 0 && !stockAck) { setStockAck(true); return; }
     const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
-  const upSt = (id, st) => setOrders(prev => {
-    const n = prev.map(o => {
-      if (o.id !== id) return o;
-      const updated = { ...o, status: st };
-      // v5.11: registrar fecha de cambio de estado para scoring de pago
-      if (st === "delivered" && !o.deliveredDate) updated.deliveredDate = new Date().toISOString().slice(0, 10);
-      if (st === "paid" && !o.paidDate) updated.paidDate = new Date().toISOString().slice(0, 10);
-      return updated;
-    });
-    saveAll("orders", n);
-    return n;
-  });
+  const upSt = (id, st) => setOrders(prev => { const today = new Date().toISOString().slice(0, 10); const n = prev.map(o => { if (o.id !== id) return o; const nowPaid = st === "paid"; return { ...o, status: st, paidDate: nowPaid ? (o.paidDate || today) : null }; }); saveAll("orders", n); return n; });
   const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
   const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
   return <div>
@@ -608,7 +453,7 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
     {orders.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No orders yet.</p>}
     {orders.slice().reverse().map(o => { const c = clients.find(x => x.id === o.clientId); const tc = o.items.reduce((a, it) => a + it.qty, 0); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); const prof = (o.total || 0) - cost;
       return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
-        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}{o.foDisc && <Badge text={`1ª orden ${o.foDisc.tier}`} color="#1A5276" />}</div>
+        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}><div style={{ textAlign: "right", marginRight: 4 }}><div style={{ fontWeight: 700 }}>{fmt(o.total)}</div><div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div></div>
         <select value={o.status} onChange={e => upSt(o.id, e.target.value)} style={{ padding: "3px 6px", border: "1px solid #ddd", borderRadius: 4, fontSize: 11, background: o.status === "paid" ? "#E8F5E8" : o.status === "delivered" ? "#EBF5FB" : "#FDF2E9" }}><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="paid">Paid</option></select>
         {c?.phone && <WaBtn phone={c.phone} msg={o.status !== "paid" ? waPayment(o, c) : waOrder(o, c)} label={o.status !== "paid" ? "Remind" : "WA"} small />}
@@ -691,7 +536,7 @@ const Reports = ({ orders, clients, purchases }) => {
   // FIX #4: Usar semanas reales
   const weeks = calcWeeks(orders);
   const md = {}; orders.forEach(o => { const m = o.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; md[m].rev += o.total || 0; md[m].cost += o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); md[m].cases += o.items.reduce((a, it) => a + it.qty, 0); md[m].orders++; });
-  const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => { const base = (o.foDisc && p.id === "Slaps") ? o.foDisc.price : p.price * (1 - (o.discount || 0)); return a + base * it.qty; }, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
+  const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + (p.price * (1 - (o.discount || 0))) * it.qty, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
   const tR = orders.reduce((s, o) => s + (o.total || 0), 0); const tC = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
   return <div>
     <ST>P&L summary <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)} week span)</span></ST>
@@ -703,14 +548,11 @@ const Reports = ({ orders, clients, purchases }) => {
   </div>;
 };
 
-const Receipt = ({ order, clients, orders }) => {
+const Receipt = ({ order, clients }) => {
   if (!order) return <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>Select from Orders tab.</p>;
   const cl = clients.find(c => c.id === order.clientId); const disc = order.discount || 0;
   const sub = order.items.reduce((s, it) => s + (pF(it.productId)?.price || 0) * it.qty, 0);
-  const invNum = invoiceNumber(order, orders || []);
-  const dueDate = cl ? orderDueDate(order, cl) : null;
-  const terms = cl?.paymentTerms || "Contado";
-  const lang = cl?.language || "Español";
+  const orderNum = order.id.slice(-6).toUpperCase();
 
   const downloadPDF = () => {
     const doc = new jsPDF({ unit: "pt", format: "letter" });
@@ -718,142 +560,73 @@ const Receipt = ({ order, clients, orders }) => {
     const mg = 50, cw = W - mg * 2;
     let y = 50;
     doc.setFillColor(196, 30, 58); doc.rect(0, 0, W, 6, "F");
-    // Header — nombre comercial
     doc.setFont("helvetica", "bold"); doc.setFontSize(22); doc.setTextColor(196, 30, 58);
-    doc.text(BUSINESS.tradeName, W / 2, y, { align: "center" }); y += 16;
-    // Nombre legal
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(80, 80, 80);
-    doc.text(BUSINESS.legalName, W / 2, y, { align: "center" }); y += 11;
-    doc.setTextColor(120, 120, 120);
-    doc.text(BUSINESS.tagline, W / 2, y, { align: "center" }); y += 11;
-    doc.text(`${BUSINESS.address}, ${BUSINESS.cityStateZip}`, W / 2, y, { align: "center" }); y += 11;
-    doc.text(`${BUSINESS.contact} \u2022 ${BUSINESS.phone} \u2022 ${BUSINESS.email}`, W / 2, y, { align: "center" }); y += 11;
-    doc.setFontSize(8); doc.setTextColor(140, 140, 140);
-    doc.text(`EIN: ${BUSINESS.ein}  \u2022  CA Seller's Permit: ${BUSINESS.sellersPermit}`, W / 2, y, { align: "center" }); y += 14;
-    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 18;
-
-    // INVOICE label + número
-    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(60, 60, 60);
-    doc.text(tr(lang, "INVOICE / FACTURA"), mg, y);
-    doc.setFontSize(11); doc.setTextColor(196, 30, 58);
-    doc.text(invNum, W - mg, y, { align: "right" }); y += 18;
-
-    // Bill To + Fechas
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
-    doc.text(tr(lang, "BILL TO / FACTURAR A"), mg, y);
-    doc.text(tr(lang, "FECHAS"), W - mg - 160, y); y += 12;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(30, 30, 30);
-    doc.text(cl?.name || "\u2014", mg, y);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(80, 80, 80);
-    doc.text(`${tr(lang, "Pedido")}: ${fmtD(order.date)}`, W - mg - 160, y); y += 12;
-    if (cl?.address) { doc.text(cl.address, mg, y); }
-    if (order.deliveredDate) doc.text(`${tr(lang, "Entrega")}: ${fmtD(order.deliveredDate)}`, W - mg - 160, y); y += 12;
-    if (cl?.contact) { doc.text(`${tr(lang, "Atn:")} ${cl.contact}`, mg, y); }
-    if (dueDate && terms !== "Contado") doc.text(`${tr(lang, "Vence")}: ${fmtD(dueDate)}`, W - mg - 160, y); y += 12;
-    if (cl?.phone) { doc.text(cl.phone, mg, y); y += 12; }
-
-    // Status badge + términos
-    y += 6;
+    doc.text("DULCE SABOR", W / 2, y, { align: "center" }); y += 18;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
+    doc.text("Dulces Mexicanos Aut\u00e9nticos \u2022 Norte de California", W / 2, y, { align: "center" }); y += 14;
+    doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+    doc.text("Jos\u00e9 Flores \u2022 (707) 360-7420 \u2022 megapg.norcal@gmail.com", W / 2, y, { align: "center" }); y += 10;
+    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 20;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(30, 30, 30);
+    doc.text(cl?.name || "\u2014", mg, y); doc.text(`Pedido #${orderNum}`, W - mg, y, { align: "right" }); y += 15;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100, 100, 100);
+    if (cl?.address) doc.text(cl.address, mg, y);
+    doc.text(fmtD(order.date), W - mg, y, { align: "right" }); y += 14;
+    if (cl?.phone) doc.text(cl.phone, mg, y);
     const sc = { pending: [211, 84, 0], delivered: [26, 82, 118], paid: [27, 115, 64] }[order.status] || [100, 100, 100];
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(sc[0], sc[1], sc[2]);
-    doc.text(`${tr(lang, "ESTADO")}: ${tr(lang, order.status).toUpperCase()}`, mg, y);
-    doc.setTextColor(108, 52, 131);
-    doc.text(`${tr(lang, "Términos")}: ${tr(lang, terms)}`, W - mg, y, { align: "right" }); y += 16;
-
+    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(sc[0], sc[1], sc[2]);
+    doc.text(order.status.toUpperCase(), W - mg, y, { align: "right" }); y += (cl?.phone ? 14 : 8) + 10;
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 16;
-
-    // Tabla productos
     doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(196, 30, 58);
     const cols = [mg, mg + cw * 0.50, mg + cw * 0.65, mg + cw * 0.82];
-    doc.text(tr(lang, "Producto"), cols[0], y); doc.text(tr(lang, "Cant."), cols[1], y, { align: "center" }); doc.text(tr(lang, "Precio"), cols[2], y, { align: "right" }); doc.text(tr(lang, "Total"), W - mg, y, { align: "right" }); y += 8;
+    doc.text("Producto", cols[0], y); doc.text("Cant.", cols[1], y, { align: "center" }); doc.text("Precio", cols[2], y, { align: "right" }); doc.text("Total", W - mg, y, { align: "right" }); y += 8;
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 14;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(40, 40, 40);
     order.items.forEach(it => { const p = pF(it.productId); doc.text(p?.name || it.productId, cols[0], y); doc.text(String(it.qty), cols[1], y, { align: "center" }); doc.text(fmt(p?.price), cols[2], y, { align: "right" }); doc.text(fmt((p?.price || 0) * it.qty), W - mg, y, { align: "right" }); y += 6; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.3); doc.line(mg, y, W - mg, y); y += 14; });
     y += 4; doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5); doc.line(mg + cw * 0.5, y, W - mg, y); y += 16;
-
-    // Totales
     doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(60, 60, 60);
-    doc.text(tr(lang, "Subtotal"), mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 16;
-    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`${tr(lang, "Descuento")} (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 16; }
-    doc.setTextColor(120, 120, 120); doc.setFontSize(9);
-    doc.text(tr(lang, "Sales Tax (Sale for Resale)"), mg + cw * 0.5, y); doc.text("$0.00", W - mg, y, { align: "right" }); y += 14;
+    doc.text("Subtotal", mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 18;
+    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`Descuento (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 18; }
     doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg + cw * 0.5, y, W - mg, y); y += 20;
     doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(196, 30, 58);
-    doc.text(tr(lang, "TOTAL"), mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 16;
-
-    // Si está pagada — info de pago
-    if (order.status === "paid" && order.paidDate) {
-      y += 8; doc.setFillColor(232, 245, 232); doc.rect(mg, y - 4, cw, 22, "F");
-      doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(27, 115, 64);
-      doc.text(`${tr(lang, "PAGADO el")} ${fmtD(order.paidDate)}`, mg + 8, y + 10);
-      if (order.paymentMethod) doc.text(`${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}`, W - mg - 8, y + 10, { align: "right" });
-      y += 28;
-    }
-
-    if (order.notes) { y += 6; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`${tr(lang, "Notas:")} ${order.notes}`, mg, y); y += 14; }
-
-    // Sale for Resale notice
-    y += 8; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 12;
-    doc.setFillColor(255, 248, 225); doc.rect(mg, y - 4, cw, 28, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(60, 60, 60);
-    doc.text(tr(lang, "SALE FOR RESALE / VENTA PARA REVENTA"), mg + 8, y + 8);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(100, 100, 100);
-    doc.text(`${tr(lang, "Buyer's Resale Certificate on file. CA Seller's Permit:")} ${BUSINESS.sellersPermit}`, mg + 8, y + 20);
-    y += 36;
-
-    // Formas de pago
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text(tr(lang, "Formas de pago"), mg, y); y += 13;
+    doc.text("TOTAL", mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 14;
+    if (order.notes) { y += 10; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`Notas: ${order.notes}`, mg, y); y += 14; }
+    y += 10; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 16;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text("Formas de pago", mg, y); y += 14;
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100, 100, 100);
-    [`${tr(lang, "Cheque a nombre de:")} ${BUSINESS.legalName}`, `Zelle: ${BUSINESS.zelle}`, `Venmo: ${BUSINESS.venmo}`, tr(lang, "Efectivo contra entrega")].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 12; });
-
-    // Línea de firma
-    y += 12; doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.5);
-    doc.line(mg, y, mg + cw * 0.45, y); doc.line(mg + cw * 0.55, y, W - mg, y); y += 10;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(140, 140, 140);
-    doc.text(tr(lang, "Firma del cliente / recibido"), mg, y); doc.text(tr(lang, "Firma del vendedor"), mg + cw * 0.55, y); y += 16;
-
-    // Footer
-    doc.setFontSize(8); doc.setTextColor(160, 160, 160);
-    doc.text(`${tr(lang, "¡Gracias por tu compra!")} \u2022 https://${BUSINESS.website}`, W / 2, y, { align: "center" });
+    ["Efectivo contra entrega", "Zelle: megapg.norcal@gmail.com", "Venmo: @MegaPG-NorCal", "Cheque a nombre de: Dulce Sabor LLC"].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 13; });
+    y += 10; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 14;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(160, 160, 160);
+    doc.text("\u00a1Gracias por tu compra!", W / 2, y, { align: "center" }); y += 12;
+    doc.text("https://dulcesaborca.com", W / 2, y, { align: "center" });
     doc.setFillColor(196, 30, 58); doc.rect(0, doc.internal.pageSize.getHeight() - 6, W, 6, "F");
-    doc.save(`${invNum}_${(cl?.name || "cliente").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
+    doc.save(`DulceSabor_${orderNum}_${order.date}.pdf`);
   };
 
   const printThermal = () => {
     const items = order.items.map(it => { const p = pF(it.productId); return `<tr><td style="padding:2px 0">${p?.name || it.productId}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt((p?.price || 0) * it.qty * (1 - disc))}</td></tr>`; }).join("");
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>Print</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:monospace,sans-serif;width:72mm;font-size:11px;color:#000;padding:2mm}
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:monospace,sans-serif;width:72mm;font-size:12px;color:#000;padding:2mm}
 @page{size:80mm auto;margin:0}
 @media print{body{width:72mm;padding:2mm}}.hdr{text-align:center;border-bottom:2px dashed #000;padding-bottom:4px;margin-bottom:6px}
-.hdr h1{font-size:16px;font-weight:900;letter-spacing:1px}.hdr p{font-size:9px;line-height:1.3}
-.legal{font-size:8px;color:#000;text-align:center;border-bottom:1px dashed #000;padding-bottom:3px;margin-bottom:6px;line-height:1.3}
-.info{display:flex;justify-content:space-between;margin-bottom:4px;font-size:10px}
-.info2{font-size:9px;margin-bottom:6px;line-height:1.4}
+.hdr h1{font-size:16px;font-weight:900;letter-spacing:1px}.hdr p{font-size:10px}
+.info{display:flex;justify-content:space-between;margin-bottom:6px;font-size:11px}
 table{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0}th{text-align:left;border-bottom:1px dashed #000;padding:2px 0;font-size:10px}
 td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;font-size:11px}
 .tot .line{display:flex;justify-content:space-between;padding:1px 0}
-.tot .grand{font-size:15px;font-weight:900;border-top:2px solid #000;margin-top:4px;padding-top:4px}
-.resale{border:1px dashed #000;padding:4px;margin-top:6px;font-size:9px;text-align:center;font-weight:700}
-.pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px;line-height:1.4}
-.sig{margin-top:10px;font-size:9px}.sig .line{border-bottom:1px solid #000;height:18px}
+.tot .grand{font-size:16px;font-weight:900;border-top:2px solid #000;margin-top:4px;padding-top:4px}
+.pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:10px}
 .ftr{text-align:center;border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px}
-.paid{background:#000;color:#fff;text-align:center;padding:3px;margin-top:6px;font-weight:900;font-size:11px}
 </style></head><body>
-<div class="hdr"><h1>${BUSINESS.tradeName}</h1><p><b>${BUSINESS.legalName}</b></p><p>${BUSINESS.address}<br>${BUSINESS.cityStateZip}</p><p>${BUSINESS.contact} &bull; ${BUSINESS.phone}</p><p>${BUSINESS.email}</p></div>
-<div class="legal">EIN: ${BUSINESS.ein}<br>CA Seller's Permit: ${BUSINESS.sellersPermit}</div>
-<div class="info"><div><b>${tr(lang, "INVOICE / FACTURA")}</b></div><div><b>${invNum}</b></div></div>
-<div class="info2"><b>${cl?.name || ""}</b>${cl?.address ? `<br>${cl.address}` : ""}${cl?.contact ? `<br>${tr(lang, "Atn:")} ${cl.contact}` : ""}${cl?.phone ? `<br>${cl.phone}` : ""}<br>${tr(lang, "Pedido")}: ${fmtD(order.date)}${order.deliveredDate ? `<br>${tr(lang, "Entrega")}: ${fmtD(order.deliveredDate)}` : ""}${dueDate && terms !== "Contado" ? `<br>${tr(lang, "Vence")}: ${fmtD(dueDate)} (${tr(lang, terms)})` : `<br>${tr(lang, "Términos")}: ${tr(lang, terms)}`}</div>
-<table><thead><tr><th>${tr(lang, "Producto")}</th><th style="text-align:center">${tr(lang, "Cant.")}</th><th style="text-align:right">${tr(lang, "Total")}</th></tr></thead><tbody>${items}</tbody></table>
-<div class="tot"><div class="line"><span>${tr(lang, "Subtotal")}</span><span>${fmt(sub)}</span></div>
-${disc > 0 ? `<div class="line"><span>${lang === "English" ? "Disc." : "Desc."} ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
-<div class="line" style="font-size:9px;color:#666"><span>${tr(lang, "Sales Tax (Sale for Resale)")}</span><span>$0.00</span></div>
-<div class="line grand"><span>${tr(lang, "TOTAL")}</span><span>${fmt(order.total)}</span></div></div>
-${order.status === "paid" && order.paidDate ? `<div class="paid">${tr(lang, "PAGADO el").toUpperCase()} ${fmtD(order.paidDate)}${order.paymentMethod ? ` &bull; ${order.paymentMethod}${order.paymentRef ? ` #${order.paymentRef}` : ""}` : ""}</div>` : ""}
-<div class="resale">${tr(lang, "SALE FOR RESALE / VENTA PARA REVENTA")}<br>${lang === "English" ? "Resale Cert. on file" : "Resale Cert. en archivo"}<br>Permit: ${BUSINESS.sellersPermit}</div>
-<div class="pay"><b>${tr(lang, "Formas de pago")}:</b><br>&bull; ${tr(lang, "Cheque a nombre de:")} ${BUSINESS.legalName}<br>&bull; Zelle: ${BUSINESS.zelle}<br>&bull; Venmo: ${BUSINESS.venmo}<br>&bull; ${tr(lang, "Efectivo contra entrega")}</div>
-${order.notes ? `<div style="font-size:9px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
-<div class="sig"><div class="line"></div><div style="text-align:center">${tr(lang, "Firma del cliente / recibido")}</div></div>
-<div class="ftr">${tr(lang, "¡Gracias por tu compra!")}<br>https://${BUSINESS.website}</div>
+<div class="hdr"><h1>DULCE SABOR</h1><p>LLC</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
+<div class="info"><div><b>${cl?.name || ""}</b>${cl?.phone ? `<br>${cl.phone}` : ""}</div><div style="text-align:right"><b>#${orderNum}</b><br>${fmtD(order.date)}</div></div>
+<table><thead><tr><th>Producto</th><th style="text-align:center">Cant.</th><th style="text-align:right">Total</th></tr></thead><tbody>${items}</tbody></table>
+<div class="tot"><div class="line"><span>Subtotal</span><span>${fmt(sub)}</span></div>
+${disc > 0 ? `<div class="line"><span>Desc. ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
+<div class="line grand"><span>TOTAL</span><span>${fmt(order.total)}</span></div></div>
+<div class="pay"><b>Pago:</b> Efectivo &bull; Zelle &bull; Venmo &bull; Cheque</div>
+${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
+<div class="ftr">&iexcl;Gracias por su compra!<br>https://dulcesaborca.com</div>
 <script>window.onload=function(){window.print();}<\/script>
 </body></html>`;
     const w = window.open("", "_blank", "width=320,height=600");
@@ -867,232 +640,41 @@ ${order.notes ? `<div style="font-size:9px;margin-top:4px;font-style:italic">${o
       {cl?.phone && <WaBtn phone={cl.phone} msg={waReceipt(order, cl)} label="Enviar por WhatsApp" />}
       {cl?.phone && order.status !== "paid" && <WaBtn phone={cl.phone} msg={waPayment(order, cl)} label="Recordatorio de pago" />}
     </div>
-    <div style={{ maxWidth: 540, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
-      {/* Header */}
-      <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}>
-        <div style={{ fontSize: 22, fontWeight: 900, color: "#C41E3A", letterSpacing: 1 }}>{BUSINESS.tradeName}</div>
-        <div style={{ fontSize: 11, color: "#555", marginTop: 2, fontWeight: 600 }}>{BUSINESS.legalName}</div>
-        <div style={{ fontSize: 10, color: "#888" }}>{BUSINESS.tagline}</div>
-        <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>{BUSINESS.address}, {BUSINESS.cityStateZip}</div>
-        <div style={{ fontSize: 11, color: "#555" }}>{BUSINESS.contact} • {BUSINESS.phone} • {BUSINESS.email}</div>
-        <div style={{ fontSize: 9, color: "#999", marginTop: 4 }}>EIN: {BUSINESS.ein} • CA Seller's Permit: {BUSINESS.sellersPermit}</div>
-      </div>
-
-      {/* Invoice number */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid #eee" }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#555" }}>{tr(lang, "INVOICE / FACTURA")}</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#C41E3A" }}>{invNum}</div>
-      </div>
-
-      {/* Bill to + dates */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 12, marginBottom: 12 }}>
-        <div>
-          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>{tr(lang, "BILL TO / FACTURAR A")}</div>
-          <div style={{ fontWeight: 700, marginTop: 3 }}>{cl?.name}</div>
-          {cl?.address && <div style={{ color: "#777", fontSize: 11 }}>{cl.address}</div>}
-          {cl?.contact && <div style={{ color: "#777", fontSize: 11 }}>{tr(lang, "Atn:")} {cl.contact}</div>}
-          {cl?.phone && <div style={{ color: "#777", fontSize: 11 }}>{cl.phone}</div>}
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 9, color: "#999", fontWeight: 700, letterSpacing: 0.5 }}>{tr(lang, "FECHAS")}</div>
-          <div style={{ fontSize: 11, marginTop: 3 }}>{tr(lang, "Pedido")}: <b>{fmtD(order.date)}</b></div>
-          {order.deliveredDate && <div style={{ fontSize: 11 }}>{tr(lang, "Entrega")}: <b>{fmtD(order.deliveredDate)}</b></div>}
-          {dueDate && terms !== "Contado" && <div style={{ fontSize: 11, color: "#C41E3A" }}>{tr(lang, "Vence")}: <b>{fmtD(dueDate)}</b></div>}
-          <div style={{ marginTop: 6 }}>
-            <Badge text={tr(lang, order.status)} color={ST_CLR[order.status]} />
-            <span style={{ marginLeft: 4 }}><Badge text={tr(lang, terms)} color={TERM_CLR[terms] || "#888"} /></span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabla productos */}
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}>
-        <thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>{tr(lang, "Producto")}</th><th style={{ textAlign: "center", color: "#C41E3A" }}>{tr(lang, "Cant.")}</th><th style={{ textAlign: "right", color: "#C41E3A" }}>{tr(lang, "Precio")}</th><th style={{ textAlign: "right", color: "#C41E3A" }}>{tr(lang, "Total")}</th></tr></thead>
-        <tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody>
-      </table>
-
-      {/* Totales */}
-      <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>{tr(lang, "Subtotal")}</span><span>{fmt(sub)}</span></div>
-        {disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>{tr(lang, "Descuento")} ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#999", fontSize: 11 }}><span>{tr(lang, "Sales Tax (Sale for Resale)")}</span><span>$0.00</span></div>
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>{tr(lang, "TOTAL")}</span><span>{fmt(order.total)}</span></div>
-      </div>
-
-      {/* Pago registrado si está pagada */}
-      {order.status === "paid" && order.paidDate && (
-        <div style={{ background: "#E8F5E8", border: "1px solid #1B7340", borderRadius: 6, padding: "8px 12px", marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ color: "#1B7340", fontWeight: 700, fontSize: 13 }}>✓ {tr(lang, "PAGADO el")} {fmtD(order.paidDate)}</div>
-          {order.paymentMethod && <div style={{ fontSize: 12, color: "#555" }}>{order.paymentMethod}{order.paymentRef ? ` #${order.paymentRef}` : ""}</div>}
-        </div>
-      )}
-
-      {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>{tr(lang, "Notas:")} {order.notes}</div>}
-
-      {/* Sale for Resale notice */}
-      <div style={{ background: "#FFF8E1", border: "1px solid #F39C12", borderRadius: 6, padding: "8px 12px", marginTop: 12, fontSize: 11 }}>
-        <div style={{ fontWeight: 700, color: "#666" }}>{tr(lang, "SALE FOR RESALE / VENTA PARA REVENTA")}</div>
-        <div style={{ color: "#888", marginTop: 2 }}>{tr(lang, "Buyer's Resale Certificate on file. CA Seller's Permit:")} {BUSINESS.sellersPermit}</div>
-      </div>
-
-      {/* Formas de pago */}
-      <div style={{ marginTop: 12, fontSize: 11, color: "#666" }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>{tr(lang, "Formas de pago")}</div>
-        <div>• {tr(lang, "Cheque a nombre de:")} <b>{BUSINESS.legalName}</b></div>
-        <div>• Zelle: {BUSINESS.zelle}</div>
-        <div>• Venmo: {BUSINESS.venmo}</div>
-        <div>• {tr(lang, "Efectivo contra entrega")}</div>
-      </div>
-
-      {/* Firmas */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30, marginTop: 24 }}>
-        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>{tr(lang, "Firma del cliente / recibido")}</div></div>
-        <div><div style={{ borderBottom: "1px solid #999", height: 30 }}></div><div style={{ fontSize: 9, color: "#999", marginTop: 3, textAlign: "center" }}>{tr(lang, "Firma del vendedor")}</div></div>
-      </div>
-
-      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>{tr(lang, "¡Gracias!")} • https://{BUSINESS.website}</div>
+    <div style={{ maxWidth: 500, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
+      <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}><div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>DULCE SABOR</div><div style={{ fontSize: 11, color: "#777" }}>Dulces Mexicanos Auténticos • Norte de California</div><div style={{ fontSize: 12, marginTop: 4 }}>José Flores • (707) 360-7420 • megapg.norcal@gmail.com</div></div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 12 }}><div><b>{cl?.name}</b>{cl?.address && <div style={{ color: "#777" }}>{cl.address}</div>}{cl?.phone && <div style={{ color: "#777" }}>{cl.phone}</div>}</div><div style={{ textAlign: "right" }}><b>#{order.id.slice(-6).toUpperCase()}</b><div style={{ color: "#777" }}>{fmtD(order.date)}</div><Badge text={order.status} color={ST_CLR[order.status]} /></div></div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Producto</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Cant.</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Precio</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody></table>
+      <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>{disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Descuento ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}<div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div></div>
+      {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notas: {order.notes}</div>}
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>¡Gracias! • https://dulcesaborca.com</div>
     </div></div>;
 };
 
 // ===== MARKET INTELLIGENCE =====
 const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
 
-// === COBROS — v5.11 === Cuentas por cobrar con fechas de vencimiento por términos
-const Cobros = ({ clients, orders, setOrders, saveAll }) => {
-  const [zf, setZf] = useState("");
-  const [payModal, setPayModal] = useState(null); // { orderId, method, ref }
-  const [copied, setCopied] = useState(null);
-
-  // Todas las órdenes entregadas pero no pagadas
-  const unpaid = orders.filter(o => o.status === "delivered").map(o => {
-    const c = clients.find(x => x.id === o.clientId);
-    if (!c) return null;
-    const due = orderDueDate(o, c);
-    const daysLeft = daysUntilDue(o, c);
-    return { o, c, due, daysLeft };
-  }).filter(Boolean);
-
-  const fil = zf ? unpaid.filter(r => r.c.zone === zf) : unpaid;
-  const sorted = fil.sort((a, b) => a.daysLeft - b.daysLeft);
-
-  const atrasadas = sorted.filter(r => r.daysLeft < 0);
-  const hoy = sorted.filter(r => r.daysLeft === 0);
-  const proximas = sorted.filter(r => r.daysLeft > 0 && r.daysLeft <= 7);
-  const futuras = sorted.filter(r => r.daysLeft > 7);
-
-  const totalAtrasado = atrasadas.reduce((s, r) => s + (r.o.total || 0), 0);
-  const totalHoy = hoy.reduce((s, r) => s + (r.o.total || 0), 0);
-  const totalProximas = proximas.reduce((s, r) => s + (r.o.total || 0), 0);
-  const totalFuturas = futuras.reduce((s, r) => s + (r.o.total || 0), 0);
-  const totalGeneral = totalAtrasado + totalHoy + totalProximas + totalFuturas;
-
-  // Agrupar atrasadas + hoy + próximas por zona para planear ruta
-  const porZona = {};
-  [...atrasadas, ...hoy, ...proximas].forEach(r => {
-    const z = r.c.zone || "Sin zona";
-    if (!porZona[z]) porZona[z] = [];
-    porZona[z].push(r);
-  });
-
-  const marcarPagado = (orderId, method, ref) => {
-    setOrders(prev => {
-      const n = prev.map(o => {
-        if (o.id !== orderId) return o;
-        return { ...o, status: "paid", paidDate: new Date().toISOString().slice(0, 10), paymentMethod: method, paymentRef: ref || "" };
-      });
-      saveAll("orders", n);
-      return n;
-    });
-    setPayModal(null);
-  };
-
-  const copyCobroMsg = async (r) => {
-    const msg = `Hola ${r.c.contact || r.c.name},\n\nRecordatorio amistoso: tienes un saldo pendiente de *${fmt(r.o.total)}* de tu pedido del ${fmtD(r.o.date)}.\n\n${r.daysLeft < 0 ? `Venció hace ${Math.abs(r.daysLeft)} día${Math.abs(r.daysLeft) !== 1 ? "s" : ""}.` : r.daysLeft === 0 ? "Vence hoy." : `Vence en ${r.daysLeft} día${r.daysLeft !== 1 ? "s" : ""}.`}\n\nFormas de pago:\n• Cheque a nombre de Dulce Sabor LLC\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Efectivo\n\n¿Paso a recoger el cheque? Avísame qué día te queda bien.\n\nGracias,\nJosé — (707) 360-7420`;
-    try { await navigator.clipboard.writeText(msg); setCopied(r.o.id); setTimeout(() => setCopied(null), 2000); } catch {}
-  };
-
-  const row = (r) => {
-    const urgent = r.daysLeft < 0;
-    const today = r.daysLeft === 0;
-    const color = urgent ? "#C41E3A" : today ? "#D35400" : r.daysLeft <= 7 ? "#F39C12" : "#1A5276";
-    return <div key={r.o.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${color}`, borderRadius: 8, padding: "10px 14px", marginBottom: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>{r.c.name} <Badge text={r.c.paymentTerms || "Contado"} color={TERM_CLR[r.c.paymentTerms] || "#888"} /></div>
-          <div style={{ fontSize: 11, color: "#777", marginTop: 2 }}>
-            {r.c.contact || "—"} • {r.c.phone || "sin tel"} • {r.c.zone || "—"}
-          </div>
-          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>
-            Pedido #{r.o.id.slice(-6).toUpperCase()} del {fmtD(r.o.date)}
-            {r.o.deliveredDate && ` • Entregado ${fmtD(r.o.deliveredDate)}`}
-          </div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 18, fontWeight: 900, color: "#1B7340" }}>{fmt(r.o.total)}</div>
-          <Badge text={urgent ? `${Math.abs(r.daysLeft)}d atrasado` : today ? "Vence HOY" : `Vence en ${r.daysLeft}d`} color={color} />
-          <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>Vence: {fmtD(r.due)}</div>
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-        <Btn small primary onClick={() => setPayModal({ orderId: r.o.id, clientName: r.c.name, total: r.o.total, method: "Cheque", ref: "" })}>Registrar pago</Btn>
-        <Btn small onClick={() => copyCobroMsg(r)}>{copied === r.o.id ? "✓ Copiado" : "Copiar recordatorio"}</Btn>
-        {r.c.phone && <WaBtn phone={r.c.phone} msg={`Hola ${r.c.contact || r.c.name}, recordatorio del pedido del ${fmtD(r.o.date)} por ${fmt(r.o.total)}. ¿Paso por el cheque esta semana? — José, Dulce Sabor`} label="WA" small />}
-      </div>
-    </div>;
-  };
+const FieldDashboard = ({ visits }) => {
+  const total = visits.length;
+  const withBrand = visits.filter(v => v.brand && v.brand !== "Neither/Unknown");
+  const megaPG = visits.filter(v => v.brand === "Mega PG" || v.brand === "Both").length;
+  const piguiUSA = visits.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length;
+  const interested = visits.filter(v => v.interest === "Very interested" || v.interest === "Somewhat interested").length;
+  const prices = visits.filter(v => v.publicPrice > 0).map(v => Number(v.publicPrice));
+  const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
+  const zones = ZONES.filter(z => z !== "Other").map(z => { const zv = visits.filter(v => v.zone === z); return { zone: z, total: zv.length, mega: zv.filter(v => v.brand === "Mega PG" || v.brand === "Both").length, pigui: zv.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length }; }).filter(z => z.total > 0);
+  const supplierCounts = {}; visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
 
   return <div>
-    <div style={{ background: "#FDF2E9", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #D35400" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#D35400", marginBottom: 4 }}>Cuentas por cobrar</div>
-      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Órdenes entregadas sin pago, ordenadas por fecha de vencimiento según los términos de cada cliente. Usa el filtro de zona para planear tu ruta de cobros semanal.</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+      <Card title="Stores visited" value={total} color="#1A5276" />
+      <Card title="Carry Mega PG" value={megaPG} sub={total > 0 ? `${Math.round(megaPG / total * 100)}%` : ""} color="#1B7340" />
+      <Card title="Carry Pigüi USA" value={piguiUSA} sub={total > 0 ? `${Math.round(piguiUSA / total * 100)}%` : ""} color="#C41E3A" />
+      <Card title="Interested" value={interested} sub={total > 0 ? `${Math.round(interested / total * 100)}%` : ""} color="#D35400" />
     </div>
-
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
-      <Card title="Atrasado" value={fmt(totalAtrasado)} sub={`${atrasadas.length} orden${atrasadas.length !== 1 ? "es" : ""}`} color="#C41E3A" />
-      <Card title="Vence hoy" value={fmt(totalHoy)} sub={`${hoy.length} orden${hoy.length !== 1 ? "es" : ""}`} color="#D35400" />
-      <Card title="Próximos 7 días" value={fmt(totalProximas)} sub={`${proximas.length} orden${proximas.length !== 1 ? "es" : ""}`} color="#F39C12" />
-      <Card title="Futuras" value={fmt(totalFuturas)} sub={`${futuras.length} orden${futuras.length !== 1 ? "es" : ""}`} color="#1A5276" />
-      <Card title="TOTAL" value={fmt(totalGeneral)} sub={`${sorted.length} orden${sorted.length !== 1 ? "es" : ""}`} color="#1B7340" />
-    </div>
-
-    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Filtrar por zona:</label>
-      <select value={zf} onChange={e => setZf(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}>
-        <option value="">Todas las zonas</option>
-        {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
-      </select>
-    </div>
-
-    {sorted.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay cobros pendientes. 🎉</div>}
-
-    {atrasadas.length > 0 && <><ST>🔴 Atrasadas ({atrasadas.length})</ST>{atrasadas.map(row)}</>}
-    {hoy.length > 0 && <><ST>🟠 Vencen hoy ({hoy.length})</ST>{hoy.map(row)}</>}
-    {proximas.length > 0 && <><ST>🟡 Vencen en los próximos 7 días ({proximas.length})</ST>{proximas.map(row)}</>}
-    {futuras.length > 0 && <><ST>🔵 Futuras ({futuras.length})</ST>{futuras.map(row)}</>}
-
-    {Object.keys(porZona).length > 1 && (atrasadas.length + hoy.length + proximas.length) > 0 && <>
-      <ST>🗺️ Ruta sugerida de cobros por zona</ST>
-      <div style={{ fontSize: 12, color: "#777", marginBottom: 8 }}>Agrupa tus visitas de cobro por zona para optimizar la ruta.</div>
-      {Object.entries(porZona).sort((a, b) => b[1].length - a[1].length).map(([zone, rs]) => {
-        const t = rs.reduce((s, r) => s + r.o.total, 0);
-        return <div key={zone} style={{ padding: "8px 12px", background: "#F8F4FF", borderLeft: "4px solid #6C3483", borderRadius: 6, marginBottom: 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#6C3483" }}>{zone} — {rs.length} parada{rs.length !== 1 ? "s" : ""} • {fmt(t)}</div>
-          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>{rs.map(r => r.c.name).join(" • ")}</div>
-        </div>;
-      })}
-    </>}
-
-    {payModal && <Modal title={`Registrar pago — ${payModal.clientName}`} onClose={() => setPayModal(null)}>
-      <div style={{ fontSize: 14, marginBottom: 12, padding: "10px 14px", background: "#E8F5E8", borderRadius: 6 }}>
-        <div style={{ color: "#1B7340" }}>Monto: <b style={{ fontSize: 18 }}>{fmt(payModal.total)}</b></div>
-      </div>
-      <Inp label="Forma de pago" value={payModal.method} onChange={v => setPayModal(p => ({ ...p, method: v }))} options={["Cheque", "Efectivo", "Zelle", "Venmo", "Otro"]} />
-      <Inp label={payModal.method === "Cheque" ? "Número de cheque" : "Referencia (opcional)"} value={payModal.ref} onChange={v => setPayModal(p => ({ ...p, ref: v }))} placeholder={payModal.method === "Cheque" ? "#1234" : ""} />
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-        <Btn onClick={() => setPayModal(null)}>Cancelar</Btn>
-        <Btn primary onClick={() => marcarPagado(payModal.orderId, payModal.method, payModal.ref)}>Confirmar pago</Btn>
-      </div>
-    </Modal>}
+    {avgPrice > 0 && <div style={{ fontSize: 13, color: "#555", marginBottom: 12 }}>Avg public price: <b>{fmt(avgPrice)}</b>/bag across {prices.length} stores</div>}
+    {zones.length > 0 && <><ST>Zone penetration</ST>{zones.map(z => <div key={z.zone} style={{ marginBottom: 8 }}><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{z.zone} <span style={{ color: "#999", fontWeight: 400 }}>({z.total} stores)</span></div><div style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: "#f0f0f0" }}>{z.mega > 0 && <div style={{ width: `${z.mega / z.total * 100}%`, background: "#1B7340" }} title={`Mega PG: ${z.mega}`} />}{z.pigui > 0 && <div style={{ width: `${z.pigui / z.total * 100}%`, background: "#C41E3A" }} title={`Pigüi USA: ${z.pigui}`} />}</div><div style={{ fontSize: 10, color: "#999", marginTop: 1 }}><span style={{ color: "#1B7340" }}>■ Mega PG: {z.mega}</span> <span style={{ color: "#C41E3A", marginLeft: 8 }}>■ Pigüi USA: {z.pigui}</span></div></div>)}</>}
+    {Object.keys(supplierCounts).length > 0 && <><ST>Supplier channels</ST>{Object.entries(supplierCounts).sort((a, b) => b[1] - a[1]).map(([sup, cnt]) => <div key={sup} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{sup}</span><b>{cnt}</b></div>)}</>}
+    {total === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No field visits yet. Go to "Visits" tab to start capturing data.</div>}
   </div>;
 };
 
@@ -1143,6 +725,40 @@ const VisitsList = ({ visits, onEdit, onDelete }) => {
       {v.notes && <div style={{ fontSize: 12, color: "#555", marginTop: 4, lineHeight: 1.4 }}>{v.notes.length > 150 ? v.notes.slice(0, 150) + "..." : v.notes}</div>}
       {v.productsSeen?.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>{v.productsSeen.map(p => <span key={p} style={{ fontSize: 10, padding: "1px 6px", background: "#f0f0f0", borderRadius: 3, color: "#666" }}>{p}</span>)}</div>}
     </div>)}
+  </div>;
+};
+
+const FieldExport = ({ visits }) => {
+  const exportVisits = () => {
+    const lines = visits.map(v => [
+      `STORE: ${v.storeName}`,
+      `Zone: ${v.zone || "—"} | Type: ${v.storeType || "—"} | Date: ${fmtD(v.date)}`,
+      `Contact: ${v.contact || "—"} | Phone: ${v.phone || "—"}`,
+      `Address: ${v.address || "—"}`,
+      `Brand on shelf: ${v.brand || "—"}`,
+      `Products seen: ${v.productsSeen?.join(", ") || "—"}`,
+      `Supplier: ${v.supplier || "—"} | Public price: ${v.publicPrice ? fmt(v.publicPrice) : "—"}`,
+      `Interest: ${v.interest || "—"} | Foot traffic: ${v.footTraffic || "—"}`,
+      `Left samples: ${v.leftSamples ? `Yes (${v.samplesQty || "?"})` : "No"}`,
+      v.painPoints ? `Pain points: ${v.painPoints}` : null,
+      v.competitorProducts ? `Competitors: ${v.competitorProducts}` : null,
+      v.notes ? `Notes: ${v.notes}` : null,
+      "─".repeat(50)
+    ].filter(Boolean).join("\n")).join("\n\n");
+    const header = `DULCE SABOR — Field Intelligence Report\nExported: ${new Date().toLocaleString()}\nTotal visits: ${visits.length}\n${"═".repeat(50)}\n\n`;
+    const blob = new Blob([header + lines], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_FieldData_${new Date().toISOString().slice(0,10)}.txt`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+  return <div>
+    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "16px 20px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 6 }}>Export field data for AI analysis</div>
+      <div style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>Download your visit data as a text file, then upload it to Claude for a full intelligence report — pricing analysis, competitive map, and follow-up plan. Free and with full context of your business.</div>
+    </div>
+    <Btn primary onClick={exportVisits} disabled={visits.length === 0}>Export {visits.length} visit{visits.length !== 1 ? "s" : ""} for analysis</Btn>
+    {visits.length === 0 && <p style={{ color: "#999", fontSize: 12, marginTop: 8 }}>Add visits first in the Visits tab.</p>}
+    {visits.length > 0 && <div style={{ marginTop: 16 }}><ST>Preview ({visits.length} visits)</ST>{visits.slice(-5).reverse().map(v => <div key={v.id} style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}><b>{v.storeName}</b> <span style={{ color: "#999" }}>{v.zone} • {fmtD(v.date)}</span> {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? "#1B7340" : "#D35400"} />}</div>)}{visits.length > 5 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...and {visits.length - 5} more</div>}</div>}
   </div>;
 };
 
@@ -1689,7 +1305,6 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
       const woPhone = normPhone(wo.phone);
       let client = clients.find(c => normPhone(c.phone) === woPhone);
       let updatedClients = clients;
-      const isNewClient = !client;
       if (!client) {
         client = {
           id: uid(),
@@ -1723,24 +1338,10 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
         }
       }
 
-      // 3. Calculate totals with client tier discount + 1ª orden override on Slaps
+      // 3. Calculate totals with client tier discount
       const disc = TIER_DISC[client.tier] || 0;
-      // First-order discount: only for brand-new clients with no prior orders, applies to Slaps qty tiers
-      const hasPriorOrders = orders.some(o => o.clientId === client.id);
-      const slapsItem = validItems.find(it => it.productId === "Slaps");
-      const slapsQty = slapsItem ? Number(slapsItem.qty) : 0;
-      let foDisc = null;
-      if (isNewClient && !hasPriorOrders && slapsQty >= 5) {
-        if (slapsQty >= 20) foDisc = { tier: "20+", price: 35 };
-        else if (slapsQty >= 10) foDisc = { tier: "10-19", price: 37.50 };
-        else foDisc = { tier: "5-9", price: 38.75 };
-      }
-      const sub = validItems.reduce((s, it) => {
-        const p = pF(it.productId);
-        if (foDisc && it.productId === "Slaps") return s + foDisc.price * it.qty;
-        return s + (p?.price || 0) * it.qty * (1 - disc);
-      }, 0);
-      const total = sub;
+      const sub = validItems.reduce((s, it) => s + (pF(it.productId)?.price || 0) * it.qty, 0);
+      const total = sub * (1 - disc);
 
       // 4. Create order
       const newOrder = {
@@ -1748,8 +1349,7 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
         clientId: client.id,
         date: new Date().toISOString().slice(0, 10),
         items: validItems.map(it => ({ productId: it.productId, qty: Number(it.qty) })),
-        discount: foDisc ? 0 : disc,
-        foDisc,
+        discount: disc,
         total: parseFloat(total.toFixed(2)),
         status: "pending",
         notes: `Importado de pedido web ${wo.id}${wo.pago ? ` • Pago: ${wo.pago}` : ""}`,
@@ -1864,10 +1464,130 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
   </div>;
 };
 
+const Representatives = ({ representatives, setRepresentatives, saveAll, clients, orders }) => {
+  const emptyForm = { name: "", phone: "", email: "", contractDate: "", phase2Active: false, phase2ActivatedDate: "", milestone25Paid: false, milestone50Paid: false, milestone75Paid: false, active: true, notes: "" };
+  const [sf, setSf] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [delC, setDelC] = useState(null);
+  const delRef = useRef(null);
+
+  const openN = () => { setForm(emptyForm); setEdit(null); setSf(true); };
+  const openE = (r) => { setForm({ ...emptyForm, ...r }); setEdit(r.id); setSf(true); };
+
+  const save = () => {
+    if (!form.name) return;
+    const cleanForm = { ...form, phase2ActivatedDate: form.phase2Active && !form.phase2ActivatedDate ? new Date().toISOString().slice(0, 10) : form.phase2ActivatedDate };
+    if (edit) {
+      setRepresentatives(prev => { const n = prev.map(r => r.id === edit ? { ...r, ...cleanForm } : r); saveAll("representatives", n); return n; });
+    } else {
+      const newRep = { ...cleanForm, id: uid(), created: new Date().toISOString() };
+      setRepresentatives(prev => { const n = [...prev, newRep]; saveAll("representatives", n); return n; });
+    }
+    setSf(false);
+  };
+
+  const del = (id) => {
+    if (delRef.current === id) {
+      setRepresentatives(prev => { const n = prev.filter(r => r.id !== id); saveAll("representatives", n); return n; });
+      delRef.current = null; setDelC(null);
+    } else {
+      delRef.current = id; setDelC(id);
+      setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelC(null); } }, 3000);
+    }
+  };
+
+  const getStats = (repId) => {
+    const repClients = clients.filter(c => c.representativeId === repId);
+    const active = repClients.filter(c => isActiveAccount(c.id, orders)).length;
+    const totalPaid = orders.filter(o => o.status === "paid" && repClients.some(c => c.id === o.clientId)).reduce((s, o) => s + (o.total || 0), 0);
+    return { clientCount: repClients.length, activeCount: active, totalPaid };
+  };
+
+  return <div>
+    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 4 }}>Representantes de ventas</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Gestión de representantes independientes y sus cuentas asignadas. Las comisiones (7% cuenta nueva, 5% residual, +2% Fase 2, bonos por milestones de 25/50/75 cuentas activas) se calcularán en el tab <b>Comisiones</b> (próxima versión).</div>
+    </div>
+    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+      <Btn primary onClick={openN}>+ Nuevo representante</Btn>
+    </div>
+    {representatives.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No hay representantes registrados.</p>}
+    {representatives.map(r => {
+      const stats = getStats(r.id);
+      return <div key={r.id} style={{ padding: "12px 16px", background: r.active ? "#fff" : "#f5f5f5", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>{r.name}</span>
+              {!r.active && <Badge text="Inactivo" color="#888" />}
+              {r.phase2Active && <Badge text="Fase 2" color="#1B7340" />}
+              {r.milestone25Paid && <Badge text="✓ Bono 25" color="#6C3483" />}
+              {r.milestone50Paid && <Badge text="✓ Bono 50" color="#6C3483" />}
+              {r.milestone75Paid && <Badge text="✓ Bono 75" color="#6C3483" />}
+            </div>
+            <div style={{ fontSize: 12, color: "#777" }}>{[r.phone, r.email].filter(Boolean).join(" • ") || "Sin contacto"}</div>
+            {r.contractDate && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Contrato desde: {fmtD(r.contractDate)}</div>}
+            {r.phase2Active && r.phase2ActivatedDate && <div style={{ fontSize: 11, color: "#1B7340", marginTop: 2 }}>Fase 2 activa desde: {fmtD(r.phase2ActivatedDate)}</div>}
+            <div style={{ fontSize: 12, color: "#555", marginTop: 6 }}>
+              <b>{stats.clientCount}</b> cuenta{stats.clientCount !== 1 ? "s" : ""} asignada{stats.clientCount !== 1 ? "s" : ""} • <b style={{ color: stats.activeCount >= 25 ? "#1B7340" : "#555" }}>{stats.activeCount}</b> activa{stats.activeCount !== 1 ? "s" : ""} (últimos 90d) • <b>{fmt(stats.totalPaid)}</b> cobrado
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <Btn small onClick={() => openE(r)}>Edit</Btn>
+            <Btn small danger onClick={() => del(r.id)} style={delC === r.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === r.id ? "Sure?" : "✕"}</Btn>
+          </div>
+        </div>
+      </div>;
+    })}
+    {sf && <Modal title={edit ? "Editar representante" : "Nuevo representante"} onClose={() => setSf(false)}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+        <Inp label="Nombre *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Francisco Carbajal" />
+        <Inp label="Teléfono" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(707) 555-1234" />
+        <Inp label="Email" value={form.email} onChange={v => setForm(p => ({ ...p, email: v }))} placeholder="francisco@email.com" />
+        <Inp label="Fecha de contrato" type="date" value={form.contractDate} onChange={v => setForm(p => ({ ...p, contractDate: v }))} />
+      </div>
+      <Inp label="Notas" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
+      <div style={{ marginTop: 12, padding: 10, background: "#F8F8F8", borderRadius: 6, border: "1px solid #eee" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>Fase 2 — Revenue Share 2% (§11-12 contrato)</div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 6, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.phase2Active} onChange={e => setForm(p => ({ ...p, phase2Active: e.target.checked, phase2ActivatedDate: e.target.checked && !p.phase2ActivatedDate ? new Date().toISOString().slice(0, 10) : p.phase2ActivatedDate }))} />
+          <span>Fase 2 activada (revenue share 2% adicional al 5%/7%)</span>
+        </label>
+        {form.phase2Active && <Inp label="Fecha de activación Fase 2" type="date" value={form.phase2ActivatedDate} onChange={v => setForm(p => ({ ...p, phase2ActivatedDate: v }))} style={{ marginBottom: 0 }} />}
+      </div>
+      <div style={{ marginTop: 10, padding: 10, background: "#F8F8F8", borderRadius: 6, border: "1px solid #eee" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>Bonos por Milestones (§4.4 contrato — pago único por vida del contrato)</div>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.milestone25Paid} onChange={e => setForm(p => ({ ...p, milestone25Paid: e.target.checked }))} />
+          <span>$500 — Bono por 25 cuentas activas (pagado)</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.milestone50Paid} onChange={e => setForm(p => ({ ...p, milestone50Paid: e.target.checked }))} />
+          <span>$1,000 — Bono por 50 cuentas activas (pagado)</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.milestone75Paid} onChange={e => setForm(p => ({ ...p, milestone75Paid: e.target.checked }))} />
+          <span>$1,500 — Bono por 75 cuentas activas (pagado)</span>
+        </label>
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        <input type="checkbox" checked={!!form.active} onChange={e => setForm(p => ({ ...p, active: e.target.checked }))} />
+        Representante activo
+      </label>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+        <Btn onClick={() => setSf(false)}>Cancelar</Btn>
+        <Btn primary onClick={save}>{edit ? "Actualizar" : "Agregar"}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+};
+
 export default function App() {
   const saved = S.load();
   const defaultCampaign = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, init: true };
+  const defaultRepresentatives = [{ id: "rep-francisco-carbajal", name: "Francisco Carbajal", phone: "", email: "", contractDate: "", phase2Active: false, phase2ActivatedDate: "", milestone25Paid: false, milestone50Paid: false, milestone75Paid: false, active: true, notes: "", created: new Date().toISOString() }];
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives, init: true };
   if (!saved?.init) S.save(initData);
   // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
@@ -1881,6 +1601,8 @@ export default function App() {
   if (!initData.templates) initData.templates = [];
   // Migrate: add campaign if missing from old save
   if (!initData.campaign) initData.campaign = defaultCampaign;
+  // Migrate: add representatives if missing from old save (v5.11)
+  if (!initData.representatives) initData.representatives = defaultRepresentatives;
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -1893,6 +1615,7 @@ export default function App() {
   const [welcomes, setWelcomes] = useState(initData.welcomes);
   const [templates, setTemplates] = useState(initData.templates);
   const [campaign, setCampaign] = useState(initData.campaign);
+  const [representatives, setRepresentatives] = useState(initData.representatives);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
@@ -1908,7 +1631,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.13" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.11" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1921,9 +1644,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {}, templates: parsed.templates || [], campaign: parsed.campaign || defaultCampaign };
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {}, templates: parsed.templates || [], campaign: parsed.campaign || defaultCampaign, representatives: parsed.representatives || defaultRepresentatives };
         stateRef.current = data; S.save({ ...data, init: true });
-        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes); setTemplates(data.templates); setCampaign(data.campaign);
+        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes); setTemplates(data.templates); setCampaign(data.campaign); setRepresentatives(data.representatives);
         setTab("dashboard");
       } catch {}
     };
@@ -2041,17 +1764,7 @@ export default function App() {
       const lowStockCount = inventory.filter(i => i.stock > 0 && i.stock <= LOW).length;
       const outStockCount = inventory.filter(i => i.stock === 0).length;
 
-      // Compute cobros pendientes (atrasados + hoy)
-      let cobrosAtrasados = 0, cobrosHoy = 0, montoAtrasado = 0;
-      orders.filter(o => o.status === "delivered").forEach(o => {
-        const c = clients.find(x => x.id === o.clientId);
-        if (!c) return;
-        const d = daysUntilDue(o, c);
-        if (d < 0) { cobrosAtrasados++; montoAtrasado += (o.total || 0); }
-        else if (d === 0) cobrosHoy++;
-      });
-
-      const total = webPending + vencidos + proximos + welcomesPend + postdelPend + lowStockCount + outStockCount + cobrosAtrasados + cobrosHoy;
+      const total = webPending + vencidos + proximos + welcomesPend + postdelPend + lowStockCount + outStockCount;
 
       // Skip if nothing pending (still mark as sent to avoid re-check)
       if (total === 0) {
@@ -2067,8 +1780,6 @@ export default function App() {
       if (proximos > 0) lines.push(`🟡 Recordatorios próximos: ${proximos}`);
       if (welcomesPend > 0) lines.push(`👋 Clientes nuevos sin bienvenida: ${welcomesPend}`);
       if (postdelPend > 0) lines.push(`📊 Seguimientos post-entrega: ${postdelPend}`);
-      if (cobrosAtrasados > 0) lines.push(`💰 Cobros atrasados: ${cobrosAtrasados} (${fmt(montoAtrasado)})`);
-      if (cobrosHoy > 0) lines.push(`💵 Cobros que vencen hoy: ${cobrosHoy}`);
       if (lowStockCount > 0) lines.push(`📉 Productos con inventario bajo: ${lowStockCount}`);
       if (outStockCount > 0) lines.push(`❌ Productos agotados: ${outStockCount}`);
       lines.push(``, `TOTAL: ${total} alerta${total !== 1 ? "s" : ""}`, ``, `Abrir CRM: ${window.location.origin}`, ``, `Que tengas un excelente día. 📚`);
@@ -2097,23 +1808,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Count cobros pendientes (delivered, unpaid) for tab badge
-  const cobrosPending = orders.filter(o => o.status === "delivered").length;
-
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "cobros", l: `Cobros${cobrosPending > 0 ? ` (${cobrosPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "visits", l: `Visits (${visits.length})` }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.filter(r => r.active).length})` },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.13</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.11</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setRepresentatives(defaultRepresentatives); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
-      {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} />}
+      {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} representatives={representatives} />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
@@ -2122,10 +1830,12 @@ export default function App() {
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
+      {tab === "reps" && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} saveAll={sv} clients={clients} orders={orders} />}
       {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
-      {tab === "receipt" && <Receipt order={ro} clients={clients} orders={orders} />}
-      {tab === "cobros" && <Cobros clients={clients} orders={orders} setOrders={setOrders} saveAll={sv} />}
+      {tab === "receipt" && <Receipt order={ro} clients={clients} />}
+      {tab === "field" && <FieldDashboard visits={visits} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
+      {tab === "analysis" && <FieldExport visits={visits} />}
     </div>
     {showVisitForm && <VisitForm onSave={saveVisit} onClose={() => { setShowVisitForm(false); setEditVisit(null); }} editVisit={editVisit} />}
   </div>;
