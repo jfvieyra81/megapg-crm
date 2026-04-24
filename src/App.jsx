@@ -142,6 +142,9 @@ const POSTDEL_MAX_DAYS = 21;   // Latest: after this, reorder reminder takes ove
 const POSTDEL_URGENT_DAYS = 14; // "Last chance" threshold
 // WELCOME NEW CLIENT SETTINGS
 const WELCOME_MAX_DAYS = 14;   // Window after first order to send welcome
+// COMMISSION / REPRESENTATIVES (v5.14) — Contrato Representante Dulce Sabor §1
+const ACTIVE_ACCOUNT_DAYS = 90;         // Cuenta Activa = compra cobrada en últimos 90 días
+const NEW_ACCOUNT_LOOKBACK_DAYS = 365;  // Cuenta Nueva = sin compra en los 12 meses previos
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -310,6 +313,14 @@ const daysUntilDue = (order, client) => {
   return Math.floor((due.getTime() - Date.now()) / 86400000);
 };
 
+// ACTIVE ACCOUNT — v5.14 — Cuenta Activa según §1 contrato: compra cobrada en últimos ACTIVE_ACCOUNT_DAYS días
+const isActiveAccount = (clientId, orders) => {
+  const paid = orders.filter(o => o.clientId === clientId && o.status === "paid" && o.paidDate);
+  if (paid.length === 0) return false;
+  const last = paid.reduce((m, o) => new Date(o.paidDate) > new Date(m.paidDate) ? o : m, paid[0]);
+  return dSince(last.paidDate) <= ACTIVE_ACCOUNT_DAYS;
+};
+
 // WhatsApp helpers
 const cleanPhone = (ph) => { if (!ph) return ""; return ph.replace(/[^0-9]/g, "").replace(/^1?(\d{10})$/, "1$1"); };
 const waLink = (phone, msg) => `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(msg)}`;
@@ -373,8 +384,8 @@ const Dashboard = ({ clients, orders, inventory }) => {
   </div>;
 };
 
-const Clients = ({ clients, setClients, orders, saveAll }) => {
-  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", ownerGroup: "", paymentTerms: "Contado", creditLimit: "", language: "Español", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false };
+const Clients = ({ clients, setClients, orders, saveAll, representatives }) => {
+  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", ownerGroup: "", paymentTerms: "Contado", creditLimit: "", language: "Español", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false, representativeId: "", priorHistoryBeforeRep: false };
   const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null);
   const [form, setForm] = useState(emptyForm); const [search, setSearch] = useState("");
   const [showWebSection, setShowWebSection] = useState(false); const [uploading, setUploading] = useState(false); const [syncMsg, setSyncMsg] = useState(null); const [bulkSyncing, setBulkSyncing] = useState(false);
@@ -485,6 +496,7 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
               {c.paymentTerms && c.paymentTerms !== "Contado" && <Badge text={c.paymentTerms} color={TERM_CLR[c.paymentTerms]} />}
               {score !== null && <Badge text={`Score ${score}`} color={SCORE_CLR(score)} />}
               {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
+              {c.representativeId && <Badge text={`🧑‍💼 ${((representatives || []).find(x => x.id === c.representativeId)?.name || "Rep").split(" ")[0]}`} color="#148F77" />}
               {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
               {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
             </div>
@@ -521,6 +533,19 @@ const Clients = ({ clients, setClients, orders, saveAll }) => {
           <Inp label="Idioma del cliente" value={form.language} onChange={v => setForm(p => ({ ...p, language: v }))} options={LANGUAGES} />
         </div>
         <div style={{ fontSize: 11, color: "#777", lineHeight: 1.4 }}>El idioma controla el recibo y los mensajes de WhatsApp para este cliente. Si tienes varias sucursales del mismo dueño, pon el mismo "Grupo".</div>
+      </div>
+      {/* === REPRESENTANTE DE VENTAS — v5.14 === */}
+      <div style={{ background: "#E8F5F0", borderRadius: 8, padding: "10px 14px", marginTop: 6, marginBottom: 6, borderLeft: "4px solid #148F77" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#148F77", marginBottom: 6 }}>Representante asignado</div>
+        <select value={form.representativeId || ""} onChange={e => setForm(p => ({ ...p, representativeId: e.target.value, priorHistoryBeforeRep: e.target.value ? p.priorHistoryBeforeRep : false }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginBottom: 6 }}>
+          <option value="">José directo (sin representante)</option>
+          {(representatives || []).filter(r => r.active).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
+        {form.representativeId && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: 8, background: "#FFF8E1", borderRadius: 6, cursor: "pointer", fontSize: 11, marginTop: 6 }}>
+          <input type="checkbox" checked={!!form.priorHistoryBeforeRep} onChange={e => setForm(p => ({ ...p, priorHistoryBeforeRep: e.target.checked }))} style={{ width: 14, height: 14, marginTop: 2, flexShrink: 0 }} />
+          <span>Este cliente <b>ya compraba a Dulce Sabor</b> en los últimos 12 meses antes de que lo abriera el representante. Si está marcado, no califica como Cuenta Nueva (§1 contrato) y la comisión será 5% residual desde el primer pedido.</span>
+        </label>}
+        <div style={{ fontSize: 11, color: "#777", lineHeight: 1.4, marginTop: 6 }}>Si dejas "José directo", este cliente no genera comisión para ningún representante.</div>
       </div>
       <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
 
@@ -1864,10 +1889,131 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
   </div>;
 };
 
+// === REPRESENTATIVES — v5.14 === Gestión de representantes independientes y cuentas asignadas
+const Representatives = ({ representatives, setRepresentatives, saveAll, clients, orders }) => {
+  const emptyForm = { name: "", phone: "", email: "", contractDate: "", phase2Active: false, phase2ActivatedDate: "", milestone25Paid: false, milestone50Paid: false, milestone75Paid: false, active: true, notes: "" };
+  const [sf, setSf] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [delC, setDelC] = useState(null);
+  const delRef = useRef(null);
+
+  const openN = () => { setForm(emptyForm); setEdit(null); setSf(true); };
+  const openE = (r) => { setForm({ ...emptyForm, ...r }); setEdit(r.id); setSf(true); };
+
+  const save = () => {
+    if (!form.name) return;
+    const cleanForm = { ...form, phase2ActivatedDate: form.phase2Active && !form.phase2ActivatedDate ? new Date().toISOString().slice(0, 10) : form.phase2ActivatedDate };
+    if (edit) {
+      setRepresentatives(prev => { const n = prev.map(r => r.id === edit ? { ...r, ...cleanForm } : r); saveAll("representatives", n); return n; });
+    } else {
+      const newRep = { ...cleanForm, id: uid(), created: new Date().toISOString() };
+      setRepresentatives(prev => { const n = [...prev, newRep]; saveAll("representatives", n); return n; });
+    }
+    setSf(false);
+  };
+
+  const del = (id) => {
+    if (delRef.current === id) {
+      setRepresentatives(prev => { const n = prev.filter(r => r.id !== id); saveAll("representatives", n); return n; });
+      delRef.current = null; setDelC(null);
+    } else {
+      delRef.current = id; setDelC(id);
+      setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelC(null); } }, 3000);
+    }
+  };
+
+  const getStats = (repId) => {
+    const repClients = clients.filter(c => c.representativeId === repId);
+    const active = repClients.filter(c => isActiveAccount(c.id, orders)).length;
+    const totalPaid = orders.filter(o => o.status === "paid" && repClients.some(c => c.id === o.clientId)).reduce((s, o) => s + (o.total || 0), 0);
+    return { clientCount: repClients.length, activeCount: active, totalPaid };
+  };
+
+  return <div>
+    <div style={{ background: "#E8F5F0", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #148F77" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#148F77", marginBottom: 4 }}>Representantes de ventas</div>
+      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Gestión de representantes independientes y sus cuentas asignadas. Las comisiones (7% cuenta nueva, 5% residual, +2% Fase 2, bonos por milestones de 25/50/75 cuentas activas) se calcularán en el tab <b>Comisiones</b> (próxima versión).</div>
+    </div>
+    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+      <Btn primary onClick={openN}>+ Nuevo representante</Btn>
+    </div>
+    {representatives.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No hay representantes registrados.</p>}
+    {representatives.map(r => {
+      const stats = getStats(r.id);
+      return <div key={r.id} style={{ padding: "12px 16px", background: r.active ? "#fff" : "#f5f5f5", border: "1px solid #eee", borderLeft: "4px solid #148F77", borderRadius: 8, marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>{r.name}</span>
+              {!r.active && <Badge text="Inactivo" color="#888" />}
+              {r.phase2Active && <Badge text="Fase 2" color="#1B7340" />}
+              {r.milestone25Paid && <Badge text="✓ Bono 25" color="#6C3483" />}
+              {r.milestone50Paid && <Badge text="✓ Bono 50" color="#6C3483" />}
+              {r.milestone75Paid && <Badge text="✓ Bono 75" color="#6C3483" />}
+            </div>
+            <div style={{ fontSize: 12, color: "#777" }}>{[r.phone, r.email].filter(Boolean).join(" • ") || "Sin contacto"}</div>
+            {r.contractDate && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Contrato desde: {fmtD(r.contractDate)}</div>}
+            {r.phase2Active && r.phase2ActivatedDate && <div style={{ fontSize: 11, color: "#1B7340", marginTop: 2 }}>Fase 2 activa desde: {fmtD(r.phase2ActivatedDate)}</div>}
+            <div style={{ fontSize: 12, color: "#555", marginTop: 6 }}>
+              <b>{stats.clientCount}</b> cuenta{stats.clientCount !== 1 ? "s" : ""} asignada{stats.clientCount !== 1 ? "s" : ""} • <b style={{ color: stats.activeCount >= 25 ? "#1B7340" : "#555" }}>{stats.activeCount}</b> activa{stats.activeCount !== 1 ? "s" : ""} (90d) • <b>{fmt(stats.totalPaid)}</b> cobrado total
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <Btn small onClick={() => openE(r)}>Edit</Btn>
+            <Btn small danger onClick={() => del(r.id)} style={delC === r.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === r.id ? "Sure?" : "✕"}</Btn>
+          </div>
+        </div>
+      </div>;
+    })}
+    {sf && <Modal title={edit ? "Editar representante" : "Nuevo representante"} onClose={() => setSf(false)}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+        <Inp label="Nombre *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Francisco Carbajal" />
+        <Inp label="Teléfono" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(707) 555-1234" />
+        <Inp label="Email" value={form.email} onChange={v => setForm(p => ({ ...p, email: v }))} placeholder="francisco@email.com" />
+        <Inp label="Fecha de contrato" type="date" value={form.contractDate} onChange={v => setForm(p => ({ ...p, contractDate: v }))} />
+      </div>
+      <Inp label="Notas" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
+      <div style={{ marginTop: 12, padding: 10, background: "#F8F8F8", borderRadius: 6, border: "1px solid #eee" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>Fase 2 — Revenue Share 2% (§11-12 contrato)</div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 6, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.phase2Active} onChange={e => setForm(p => ({ ...p, phase2Active: e.target.checked, phase2ActivatedDate: e.target.checked && !p.phase2ActivatedDate ? new Date().toISOString().slice(0, 10) : p.phase2ActivatedDate }))} />
+          <span>Fase 2 activada (revenue share 2% adicional al 5%/7%)</span>
+        </label>
+        {form.phase2Active && <Inp label="Fecha de activación Fase 2" type="date" value={form.phase2ActivatedDate} onChange={v => setForm(p => ({ ...p, phase2ActivatedDate: v }))} style={{ marginBottom: 0 }} />}
+      </div>
+      <div style={{ marginTop: 10, padding: 10, background: "#F8F8F8", borderRadius: 6, border: "1px solid #eee" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>Bonos por Milestones (§4.4 contrato — pago único por vida del contrato)</div>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.milestone25Paid} onChange={e => setForm(p => ({ ...p, milestone25Paid: e.target.checked }))} />
+          <span>$500 — Bono por 25 cuentas activas (pagado)</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.milestone50Paid} onChange={e => setForm(p => ({ ...p, milestone50Paid: e.target.checked }))} />
+          <span>$1,000 — Bono por 50 cuentas activas (pagado)</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.milestone75Paid} onChange={e => setForm(p => ({ ...p, milestone75Paid: e.target.checked }))} />
+          <span>$1,500 — Bono por 75 cuentas activas (pagado)</span>
+        </label>
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        <input type="checkbox" checked={!!form.active} onChange={e => setForm(p => ({ ...p, active: e.target.checked }))} />
+        Representante activo
+      </label>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+        <Btn onClick={() => setSf(false)}>Cancelar</Btn>
+        <Btn primary onClick={save}>{edit ? "Actualizar" : "Agregar"}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+};
+
 export default function App() {
   const saved = S.load();
   const defaultCampaign = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
-  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, init: true };
+  const defaultRepresentatives = [{ id: "rep-francisco-carbajal", name: "Francisco Carbajal", phone: "", email: "", contractDate: "", phase2Active: false, phase2ActivatedDate: "", milestone25Paid: false, milestone50Paid: false, milestone75Paid: false, active: true, notes: "", created: new Date().toISOString() }];
+  const initData = saved?.init ? saved : { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives, init: true };
   if (!saved?.init) S.save(initData);
   // Migrate: add visits if missing from old save
   if (!initData.visits) initData.visits = [];
@@ -1881,6 +2027,8 @@ export default function App() {
   if (!initData.templates) initData.templates = [];
   // Migrate: add campaign if missing from old save
   if (!initData.campaign) initData.campaign = defaultCampaign;
+  // Migrate: add representatives if missing from old save (v5.14)
+  if (!initData.representatives) initData.representatives = defaultRepresentatives;
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -1893,6 +2041,7 @@ export default function App() {
   const [welcomes, setWelcomes] = useState(initData.welcomes);
   const [templates, setTemplates] = useState(initData.templates);
   const [campaign, setCampaign] = useState(initData.campaign);
+  const [representatives, setRepresentatives] = useState(initData.representatives);
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
@@ -1908,7 +2057,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.13" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.14" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1921,9 +2070,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed.clients && !parsed.orders && !parsed.visits) return;
-        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {}, templates: parsed.templates || [], campaign: parsed.campaign || defaultCampaign };
+        const data = { clients: parsed.clients || [], orders: parsed.orders || [], inventory: parsed.inventory || [], purchases: parsed.purchases || [], visits: parsed.visits || [], reminders: parsed.reminders || {}, followups: parsed.followups || {}, welcomes: parsed.welcomes || {}, templates: parsed.templates || [], campaign: parsed.campaign || defaultCampaign, representatives: parsed.representatives || defaultRepresentatives };
         stateRef.current = data; S.save({ ...data, init: true });
-        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes); setTemplates(data.templates); setCampaign(data.campaign);
+        setClients(data.clients); setOrders(data.orders); setInventory(data.inventory); setPurchases(data.purchases); setVisits(data.visits); setReminders(data.reminders); setFollowups(data.followups); setWelcomes(data.welcomes); setTemplates(data.templates); setCampaign(data.campaign); setRepresentatives(data.representatives);
         setTab("dashboard");
       } catch {}
     };
@@ -2100,20 +2249,20 @@ export default function App() {
   // Count cobros pendientes (delivered, unpaid) for tab badge
   const cobrosPending = orders.filter(o => o.status === "delivered").length;
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "cobros", l: `Cobros${cobrosPending > 0 ? ` (${cobrosPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "visits", l: `Visits (${visits.length})` }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "cobros", l: `Cobros${cobrosPending > 0 ? ` (${cobrosPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.filter(r => r.active).length})` },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "visits", l: `Visits (${visits.length})` }];
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.13</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.14</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setRepresentatives(defaultRepresentatives); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
-      {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} />}
+      {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} saveAll={sv} representatives={representatives} />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
@@ -2122,6 +2271,7 @@ export default function App() {
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} saveAll={sv} />}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
+      {tab === "reps" && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} saveAll={sv} clients={clients} orders={orders} />}
       {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
       {tab === "receipt" && <Receipt order={ro} clients={clients} orders={orders} />}
       {tab === "cobros" && <Cobros clients={clients} orders={orders} setOrders={setOrders} saveAll={sv} />}
