@@ -1816,7 +1816,7 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
     <div style={{ background: "#FEF9E7", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #F39C12" }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: "#B7950B", marginBottom: 4 }}>💰 Comisiones — Reporte mensual §5.4</div>
       <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-        Cálculo automático desde pedidos con status <b>paid</b> y <code style={{ background: "#fff", padding: "1px 4px", borderRadius: 3 }}>paidDate</code> dentro del mes seleccionado. <b>{COMM_RATE_NEW * 100}%</b> sobre primer cobro de Cuenta Nueva (sin compras 365d previos), <b>{COMM_RATE_RESIDUAL * 100}%</b> sobre cobros subsecuentes. Milestones <b>{MILESTONES.map(m => `${m.count}=${fmt(m.bonus)}`).join(" / ")}</b> sobre pico de cuentas activas en el mes. Para congelar el período como pagado, usa "Marcar como pagado".
+        Cálculo automático desde pedidos con status <b>paid</b> y <code style={{ background: "#fff", padding: "1px 4px", borderRadius: 3 }}>paidDate</code> dentro del mes seleccionado. <b>{Math.round(COMM_RATE_NEW * 100)}%</b> sobre primer cobro de Cuenta Nueva (sin compras 365d previos), <b>{Math.round(COMM_RATE_RESIDUAL * 100)}%</b> sobre cobros subsecuentes. Milestones <b>{MILESTONES.map(m => `${m.count}=${fmt(m.bonus)}`).join(" / ")}</b> sobre pico de cuentas activas en el mes. Para congelar el período como pagado, usa "Marcar como pagado".
       </div>
     </div>
 
