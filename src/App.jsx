@@ -75,6 +75,11 @@ const MILESTONES = [                    // §4.4: bonos one-time por umbral de C
 ];
 const REP_FRANCISCO_ID = "rep-francisco-carbajal";
 
+// === COMMISSIONS (Deploy C) — Ajustes y Fase 2 ===
+const MOROSO_DAYS = 60;                       // §6.2: pedido entregado y >60d sin cobrar = moroso
+const POST_TERMINATION_TAIL_MONTHS = 24;      // §10.3: cola de 24 meses tras terminación sin causa justa
+const COMM_RATE_PHASE2_BONUS = 0.02;          // §11.4 + §12.1: +2% rev share aditivo durante Fase 2
+
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
@@ -181,6 +186,61 @@ const isInMonth = (dateISO, yyyymm) => {
   const { start, end } = monthBounds(yyyymm);
   const d = new Date(dateISO).getTime();
   return d >= start.getTime() && d < end.getTime();
+};
+
+// === DEPLOY C HELPERS ===
+
+// Phase 2 active for a rep at a given date: rep.phase2Active && date >= phase2StartDate
+const isPhase2ActiveAt = (rep, atISO) => {
+  if (!rep?.phase2Active || !rep?.phase2StartDate || !atISO) return false;
+  return new Date(atISO).getTime() >= new Date(rep.phase2StartDate).getTime();
+};
+
+// Determine if a paid order falls inside the post-termination tail window (§10.3).
+// Returns: { inTail, afterTail, withinContract }
+const terminationStatus = (rep, paidDateISO) => {
+  if (!rep?.terminatedDate || !paidDateISO) return { inTail: false, afterTail: false, withinContract: true };
+  const paid = new Date(paidDateISO).getTime();
+  const term = new Date(rep.terminatedDate).getTime();
+  if (paid <= term) return { inTail: false, afterTail: false, withinContract: true };
+  const tailEnd = new Date(rep.terminatedDate);
+  tailEnd.setMonth(tailEnd.getMonth() + POST_TERMINATION_TAIL_MONTHS);
+  if (paid <= tailEnd.getTime()) return { inTail: true, afterTail: false, withinContract: false };
+  return { inTail: false, afterTail: true, withinContract: false };
+};
+
+// Compute the effective commission rate for a single paid order, considering all rules.
+// Returns: { rate, classification, phase2Applied, tailApplied, terminated }
+const effectiveCommissionRate = (rep, client, paidOrder, allOrders) => {
+  const { inTail, afterTail } = terminationStatus(rep, paidOrder.paidDate);
+
+  // §10.3: outside the 24-month tail = no commission
+  if (afterTail) return { rate: 0, classification: "Fuera de plazo (>24m)", phase2Applied: false, tailApplied: false, terminated: true };
+
+  // §10.3: inside tail = residual flat 5%, no Phase 2, no new account bonus
+  if (inTail) return { rate: COMM_RATE_RESIDUAL, classification: "Residual (cola post-salida)", phase2Applied: false, tailApplied: true, terminated: true };
+
+  // Normal contract period
+  const isNew = wasNewAccountAt(client, paidOrder, allOrders);
+  const baseRate = isNew ? COMM_RATE_NEW : COMM_RATE_RESIDUAL;
+  const phase2 = isPhase2ActiveAt(rep, paidOrder.paidDate);
+  const finalRate = phase2 ? baseRate + COMM_RATE_PHASE2_BONUS : baseRate;
+  const cls = isNew ? "Nueva" : "Residual";
+  return { rate: finalRate, classification: phase2 ? `${cls} + Fase 2` : cls, phase2Applied: phase2, tailApplied: false, terminated: false };
+};
+
+// Get morosos (delivered but unpaid for >60 days) for a rep's clients.
+const getMorososForRep = (repId, clients, orders) => {
+  const repClientIds = new Set(clients.filter(c => c.representativeId === repId).map(c => c.id));
+  return orders.filter(o => {
+    if (!repClientIds.has(o.clientId)) return false;
+    if (o.status !== "delivered") return false;
+    return dSince(o.date) > MOROSO_DAYS;
+  }).map(o => ({
+    order: o,
+    client: clients.find(c => c.id === o.clientId),
+    daysOverdue: dSince(o.date) - MOROSO_DAYS
+  })).sort((a, b) => b.daysOverdue - a.daysOverdue);
 };
 
 const syncClientToPublicStores = async (client, orders) => {
@@ -475,6 +535,9 @@ const Clients = ({ clients, setClients, orders, representatives, saveAll }) => {
 
 const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
   const [sf, setSf] = useState(false); const [delConfirm, setDelConfirm] = useState(null); const delORef = useRef(null); const [stockAck, setStockAck] = useState(false); const [form, setForm] = useState({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" });
+  // Deploy C: return modal state
+  const [returnFor, setReturnFor] = useState(null); // order being marked as returned
+  const [returnForm, setReturnForm] = useState({ amount: "", date: new Date().toISOString().slice(0, 10), notes: "" });
   const openN = () => { setForm({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" }); setSf(true); };
   const addL = () => setForm(p => ({ ...p, items: [...p.items, { productId: "", qty: 1 }] }));
   const remL = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
@@ -511,16 +574,43 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
   }); saveAll("orders", n); return n; });
   const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
   const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
+
+  // Deploy C: open / save / clear return
+  const openReturn = (o) => {
+    setReturnFor(o);
+    setReturnForm({
+      amount: o.returnedAmount ? String(o.returnedAmount) : "",
+      date: o.returnedDate || new Date().toISOString().slice(0, 10),
+      notes: o.returnedNotes || ""
+    });
+  };
+  const saveReturn = () => {
+    if (!returnFor) return;
+    const amt = parseFloat(returnForm.amount);
+    if (isNaN(amt) || amt < 0) { alert("Cantidad inválida"); return; }
+    if (amt > (returnFor.total || 0)) { if (!confirm(`La devolución (${fmt(amt)}) supera el total del pedido (${fmt(returnFor.total)}). ¿Continuar?`)) return; }
+    setOrders(prev => { const n = prev.map(o => o.id === returnFor.id ? { ...o, returnedAmount: amt, returnedDate: returnForm.date, returnedNotes: returnForm.notes } : o); saveAll("orders", n); return n; });
+    setReturnFor(null);
+  };
+  const clearReturn = () => {
+    if (!returnFor) return;
+    if (!confirm("¿Eliminar el registro de devolución de este pedido?")) return;
+    setOrders(prev => { const n = prev.map(o => o.id === returnFor.id ? { ...o, returnedAmount: 0, returnedDate: null, returnedNotes: "" } : o); saveAll("orders", n); return n; });
+    setReturnFor(null);
+  };
+
   return <div>
     <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={openN}>+ New order</Btn></div>
     {orders.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No orders yet.</p>}
     {orders.slice().reverse().map(o => { const c = clients.find(x => x.id === o.clientId); const tc = o.items.reduce((a, it) => a + it.qty, 0); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); const prof = (o.total || 0) - cost;
-      return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
-        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}</div>
+      const hasReturn = o.returnedAmount && o.returnedAmount > 0;
+      return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: hasReturn ? "#FDF2F2" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
+        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}{hasReturn && <Badge text={`↩ -${fmt(o.returnedAmount)}`} color="#C41E3A" />}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}><div style={{ textAlign: "right", marginRight: 4 }}><div style={{ fontWeight: 700 }}>{fmt(o.total)}</div><div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div></div>
         <select value={o.status} onChange={e => upSt(o.id, e.target.value)} style={{ padding: "3px 6px", border: "1px solid #ddd", borderRadius: 4, fontSize: 11, background: o.status === "paid" ? "#E8F5E8" : o.status === "delivered" ? "#EBF5FB" : "#FDF2E9" }}><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="paid">Paid</option></select>
         {c?.phone && <WaBtn phone={c.phone} msg={o.status !== "paid" ? waPayment(o, c) : waOrder(o, c)} label={o.status !== "paid" ? "Remind" : "WA"} small />}
         <Btn small onClick={() => qReorder(o)} style={{ fontSize: 10 }}>Reorder</Btn><Btn small onClick={() => { setRO(o); setTab("receipt"); }} style={{ fontSize: 10 }}>Receipt</Btn>
+        {o.status === "paid" && <Btn small onClick={() => openReturn(o)} style={{ fontSize: 10, background: hasReturn ? "#C41E3A" : "#f0f0f0", color: hasReturn ? "#fff" : "#333" }}>↩ {hasReturn ? "Edit" : "Devol"}</Btn>}
         <Btn small danger onClick={() => delO(o.id)} style={delConfirm === o.id ? { fontSize: 10, minWidth: 52, background: "#8B0000" } : { fontSize: 10 }}>{delConfirm === o.id ? "Sure?" : "✕"}</Btn></div></div>; })}
     {sf && <Modal title="New order" onClose={() => setSf(false)} wide>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><div style={{ marginBottom: 10 }}><label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>Client *</label><select value={form.clientId} onChange={e => setForm(p => ({ ...p, clientId: e.target.value }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.tier})</option>)}</select></div><Inp label="Date" type="date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} /></div>
@@ -546,6 +636,26 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
       </div>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#E8F5E8", borderRadius: 8, margin: "12px 0" }}><div><div style={{ fontSize: 12, color: "#1B7340" }}>Total</div><div style={{ fontSize: 24, fontWeight: 900, color: "#1B7340" }}>{fmt(calcT())}</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 12, color: "#777" }}>Cost: {fmt(calcC())}</div><div style={{ fontSize: 16, fontWeight: 700, color: "#1B7340" }}>Profit: {fmt(calcT() - calcC())}</div></div></div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn onClick={() => { setSf(false); setStockAck(false); }}>Cancel</Btn><Btn primary onClick={saveO}>{stockAck ? "Confirm — create anyway" : "Create order"}</Btn></div>
+    </Modal>}
+
+    {/* Deploy C: Return modal */}
+    {returnFor && <Modal title="Registrar devolución / refund" onClose={() => setReturnFor(null)}>
+      <div style={{ background: "#FDF2F2", borderLeft: "4px solid #C41E3A", padding: "10px 14px", borderRadius: 6, marginBottom: 12, fontSize: 12, color: "#555", lineHeight: 1.5 }}>
+        <b>Pedido:</b> {clients.find(c => c.id === returnFor.clientId)?.name || "?"} • {fmtD(returnFor.date)} • Total: <b>{fmt(returnFor.total)}</b>
+        <div style={{ marginTop: 4 }}>El monto registrado se restará de las comisiones del representante en el mes de la fecha de devolución (§6.1).</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+        <Inp label="Monto devuelto *" value={returnForm.amount} onChange={v => setReturnForm(p => ({ ...p, amount: v.replace(/[^0-9.]/g, "") }))} placeholder="0.00" />
+        <Inp label="Fecha de devolución *" type="date" value={returnForm.date} onChange={v => setReturnForm(p => ({ ...p, date: v }))} />
+      </div>
+      <Inp label="Notas (motivo, etc)" value={returnForm.notes} onChange={v => setReturnForm(p => ({ ...p, notes: v }))} textarea />
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
+        {returnFor.returnedAmount > 0 ? <Btn danger onClick={clearReturn}>Eliminar devolución</Btn> : <span />}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn onClick={() => setReturnFor(null)}>Cancel</Btn>
+          <Btn primary onClick={saveReturn}>Guardar devolución</Btn>
+        </div>
+      </div>
     </Modal>}
   </div>;
 };
@@ -1660,59 +1770,117 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
     if (!rep) return null;
     const { start, end } = monthBounds(selectedMonth);
 
-    // Pedidos cobrados (status=paid + paidDate dentro del mes) de clientes asignados al rep
+    // === Pedidos cobrados (status=paid + paidDate dentro del mes) de clientes asignados al rep ===
     const repClientIds = new Set(clients.filter(c => c.representativeId === rep.id).map(c => c.id));
     const paidThisMonth = orders.filter(o => repClientIds.has(o.clientId) && o.status === "paid" && o.paidDate && isInMonth(o.paidDate, selectedMonth));
 
-    // Por cada pedido, clasificar Nueva vs Residual
-    const lines = paidThisMonth.map(o => {
+    // Por cada pedido, aplicar reglas de Deploy C (tail, Phase 2)
+    const positiveLines = paidThisMonth.map(o => {
       const client = clients.find(c => c.id === o.clientId);
-      const isNew = wasNewAccountAt(client, o, orders);
-      const rate = isNew ? COMM_RATE_NEW : COMM_RATE_RESIDUAL;
+      const calc = effectiveCommissionRate(rep, client, o, orders);
       const netSale = o.total || 0;
-      const commission = netSale * rate;
+      const commission = netSale * calc.rate;
       return {
+        kind: "sale",
         orderId: o.id,
         clientId: o.clientId,
         clientName: client?.name || "?",
         orderDate: o.date,
         paidDate: o.paidDate,
         netSale,
-        classification: isNew ? "Nueva" : "Residual",
-        rate,
-        commission
+        classification: calc.classification,
+        rate: calc.rate,
+        commission,
+        phase2Applied: calc.phase2Applied,
+        tailApplied: calc.tailApplied
       };
     });
 
-    // Subtotales
-    const newCommission = lines.filter(l => l.classification === "Nueva").reduce((s, l) => s + l.commission, 0);
-    const residualCommission = lines.filter(l => l.classification === "Residual").reduce((s, l) => s + l.commission, 0);
-    const totalNetSales = lines.reduce((s, l) => s + l.netSale, 0);
+    // === Devoluciones / refunds dentro del mes (§6.1) ===
+    // Buscamos en TODOS los pedidos del rep cuyo returnedDate caiga en el mes seleccionado.
+    const returnsThisMonth = orders.filter(o =>
+      repClientIds.has(o.clientId) &&
+      o.returnedAmount > 0 &&
+      o.returnedDate &&
+      isInMonth(o.returnedDate, selectedMonth)
+    );
+    const returnLines = returnsThisMonth.map(o => {
+      const client = clients.find(c => c.id === o.clientId);
+      // Reaplica las mismas reglas que el pedido original (a su paidDate) para saber qué tasa se cobró.
+      const calc = effectiveCommissionRate(rep, client, o, orders);
+      const netRefund = -1 * (o.returnedAmount || 0);
+      const commissionReverse = netRefund * calc.rate; // negativa
+      return {
+        kind: "return",
+        orderId: o.id,
+        clientId: o.clientId,
+        clientName: client?.name || "?",
+        orderDate: o.date,
+        paidDate: o.returnedDate, // mostramos la fecha del refund para claridad
+        netSale: netRefund,
+        classification: `↩ Refund (${calc.classification})`,
+        rate: calc.rate,
+        commission: commissionReverse,
+        phase2Applied: calc.phase2Applied,
+        tailApplied: calc.tailApplied
+      };
+    });
 
-    // Milestones: pico de cuentas activas durante el mes (revisamos cada día del mes —para mes corto es cheap)
+    const lines = [...positiveLines, ...returnLines];
+
+    // === Subtotales ===
+    const newCommission = lines.filter(l => l.classification.startsWith("Nueva")).reduce((s, l) => s + l.commission, 0);
+    const residualCommission = lines.filter(l => l.classification.startsWith("Residual")).reduce((s, l) => s + l.commission, 0);
+    const refundCommission = returnLines.reduce((s, l) => s + l.commission, 0); // negativa
+    const tailCommission = lines.filter(l => l.tailApplied).reduce((s, l) => s + l.commission, 0);
+    const phase2Bonus = lines.filter(l => l.phase2Applied).reduce((s, l) => s + l.netSale * COMM_RATE_PHASE2_BONUS, 0); // sólo el delta del +2%
+    const totalNetSales = positiveLines.reduce((s, l) => s + l.netSale, 0);
+    const totalRefunds = Math.abs(returnsThisMonth.reduce((s, o) => s + (o.returnedAmount || 0), 0));
+
+    // === Milestones (sólo si rep está dentro del contrato — no cuenta en tail) ===
     let peakActive = 0;
-    const cur = new Date(start);
-    while (cur < end) {
-      const cnt = clients.filter(c => c.representativeId === rep.id && isActiveAccount(c.id, orders, cur)).length;
-      if (cnt > peakActive) peakActive = cnt;
-      cur.setDate(cur.getDate() + 1);
+    let milestoneBonus = 0;
+    let newMilestones = [];
+    const repTerminated = rep.terminatedDate && new Date(rep.terminatedDate).getTime() <= end.getTime();
+    if (!repTerminated) {
+      const cur = new Date(start);
+      while (cur < end) {
+        const cnt = clients.filter(c => c.representativeId === rep.id && isActiveAccount(c.id, orders, cur)).length;
+        if (cnt > peakActive) peakActive = cnt;
+        cur.setDate(cur.getDate() + 1);
+      }
+      const earnedSoFar = milestonesEarnedAt(peakActive).map(m => m.count);
+      const alreadyPaid = rep.milestonesPaid || [];
+      newMilestones = MILESTONES.filter(m => earnedSoFar.includes(m.count) && !alreadyPaid.includes(m.count));
+      milestoneBonus = newMilestones.reduce((s, m) => s + m.bonus, 0);
     }
-    const earnedSoFar = milestonesEarnedAt(peakActive).map(m => m.count);
-    const alreadyPaid = rep.milestonesPaid || [];
-    const newMilestones = MILESTONES.filter(m => earnedSoFar.includes(m.count) && !alreadyPaid.includes(m.count));
-    const milestoneBonus = newMilestones.reduce((s, m) => s + m.bonus, 0);
 
-    const totalCommission = newCommission + residualCommission + milestoneBonus;
+    const totalCommission = lines.reduce((s, l) => s + l.commission, 0) + milestoneBonus;
+
+    // === Morosos snapshot (informativo) ===
+    const morosos = getMorososForRep(rep.id, clients, orders);
+
+    // === Phase 2 / tail status this month ===
+    const phase2ActiveDuringMonth = isPhase2ActiveAt(rep, end.toISOString()) || isPhase2ActiveAt(rep, start.toISOString());
+    const tailDuringMonth = lines.some(l => l.tailApplied);
 
     return {
       lines: lines.sort((a, b) => new Date(b.paidDate) - new Date(a.paidDate)),
       newCommission,
       residualCommission,
+      refundCommission,
+      tailCommission,
+      phase2Bonus,
       milestoneBonus,
       newMilestones,
       peakActive,
       totalNetSales,
+      totalRefunds,
       totalCommission,
+      morosos,
+      phase2ActiveDuringMonth,
+      tailDuringMonth,
+      repTerminated,
       activeNow: clients.filter(c => c.representativeId === rep.id && isActiveAccount(c.id, orders)).length
     };
   }, [rep, selectedMonth, clients, orders]);
@@ -1732,11 +1900,17 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
       lines: liveCalc.lines,
       newCommission: liveCalc.newCommission,
       residualCommission: liveCalc.residualCommission,
+      refundCommission: liveCalc.refundCommission,
+      tailCommission: liveCalc.tailCommission,
+      phase2Bonus: liveCalc.phase2Bonus,
       milestoneBonus: liveCalc.milestoneBonus,
       newMilestones: liveCalc.newMilestones,
       peakActive: liveCalc.peakActive,
       totalNetSales: liveCalc.totalNetSales,
-      totalAmount: liveCalc.totalCommission
+      totalRefunds: liveCalc.totalRefunds,
+      totalAmount: liveCalc.totalCommission,
+      phase2ActiveDuringMonth: liveCalc.phase2ActiveDuringMonth,
+      tailDuringMonth: liveCalc.tailDuringMonth
     };
     const updated = [...commissions, record];
     setCommissions(updated);
@@ -1766,24 +1940,28 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
   // === CSV export §5.4 ===
   const exportCSV = () => {
     if (!data || !rep) return;
-    const header = ["Cliente", "ID Pedido", "Fecha Pedido", "Fecha Cobro", "Venta Neta", "Clasificación", "Tasa", "Comisión"];
+    const header = ["Tipo", "Cliente", "ID Pedido", "Fecha Pedido", "Fecha Cobro/Refund", "Venta Neta", "Clasificación", "Tasa", "Comisión"];
     const rows = data.lines.map(l => [
+      l.kind === "return" ? "Refund" : "Venta",
       `"${l.clientName.replace(/"/g, '""')}"`,
       l.orderId.slice(-8),
       l.orderDate,
       l.paidDate,
       l.netSale.toFixed(2),
-      l.classification,
+      `"${l.classification}"`,
       `${(l.rate * 100).toFixed(0)}%`,
       l.commission.toFixed(2)
     ]);
-    rows.push(["", "", "", "", "", "", "", ""]);
-    rows.push(["", "", "", "", "", "", "Subtotal Nueva (7%):", data.newCommission.toFixed(2)]);
-    rows.push(["", "", "", "", "", "", "Subtotal Residual (5%):", data.residualCommission.toFixed(2)]);
-    if (data.milestoneBonus > 0) rows.push(["", "", "", "", "", "", `Milestones (${(data.newMilestones || []).map(m => m.count + " cuentas").join(", ")}):`, data.milestoneBonus.toFixed(2)]);
-    rows.push(["", "", "", "", "", "", "TOTAL COMISIÓN:", data.totalCommission.toFixed(2)]);
-    rows.push(["", "", "", "", "", "", `Pico cuentas activas:`, String(data.peakActive)]);
-    rows.push(["", "", "", "", "", "", `Venta Neta total mes:`, data.totalNetSales.toFixed(2)]);
+    rows.push(["", "", "", "", "", "", "", "", ""]);
+    rows.push(["", "", "", "", "", "", "", "Subtotal Cuentas Nuevas:", data.newCommission.toFixed(2)]);
+    rows.push(["", "", "", "", "", "", "", "Subtotal Residual:", data.residualCommission.toFixed(2)]);
+    if (data.phase2Bonus > 0) rows.push(["", "", "", "", "", "", "", "  (incluye Fase 2 +2% delta):", data.phase2Bonus.toFixed(2)]);
+    if (data.refundCommission < 0) rows.push(["", "", "", "", "", "", "", `Devoluciones (${fmt(data.totalRefunds)}):`, data.refundCommission.toFixed(2)]);
+    if (data.milestoneBonus > 0) rows.push(["", "", "", "", "", "", "", `Milestones (${(data.newMilestones || []).map(m => m.count + " cuentas").join(", ")}):`, data.milestoneBonus.toFixed(2)]);
+    rows.push(["", "", "", "", "", "", "", "TOTAL COMISIÓN:", data.totalCommission.toFixed(2)]);
+    rows.push(["", "", "", "", "", "", "", `Pico cuentas activas:`, String(data.peakActive)]);
+    rows.push(["", "", "", "", "", "", "", `Venta Neta total mes:`, data.totalNetSales.toFixed(2)]);
+    if (data.repTerminated) rows.push(["", "", "", "", "", "", "", "Cola post-salida activa:", `Sí (24m desde ${rep.terminatedDate})`]);
 
     const csv = [header.join(","), ...rows.map(r => r.join(","))].join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
@@ -1816,7 +1994,7 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
     <div style={{ background: "#FEF9E7", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #F39C12" }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: "#B7950B", marginBottom: 4 }}>💰 Comisiones — Reporte mensual §5.4</div>
       <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-        Cálculo automático desde pedidos con status <b>paid</b> y <code style={{ background: "#fff", padding: "1px 4px", borderRadius: 3 }}>paidDate</code> dentro del mes seleccionado. <b>{Math.round(COMM_RATE_NEW * 100)}%</b> sobre primer cobro de Cuenta Nueva (sin compras 365d previos), <b>{Math.round(COMM_RATE_RESIDUAL * 100)}%</b> sobre cobros subsecuentes. Milestones <b>{MILESTONES.map(m => `${m.count}=${fmt(m.bonus)}`).join(" / ")}</b> sobre pico de cuentas activas en el mes. Para congelar el período como pagado, usa "Marcar como pagado".
+        Cálculo automático desde pedidos con status <b>paid</b> y <code style={{ background: "#fff", padding: "1px 4px", borderRadius: 3 }}>paidDate</code> dentro del mes seleccionado. <b>{Math.round(COMM_RATE_NEW * 100)}%</b> Cuenta Nueva, <b>{Math.round(COMM_RATE_RESIDUAL * 100)}%</b> Residual, <b>+{Math.round(COMM_RATE_PHASE2_BONUS * 100)}%</b> Fase 2 (§11.4 aditivo). Devoluciones (§6.1) se restan del mes de su fecha. Cola post-salida (§10.3): {POST_TERMINATION_TAIL_MONTHS} meses al {Math.round(COMM_RATE_RESIDUAL * 100)}% flat tras terminación. Milestones <b>{MILESTONES.map(m => `${m.count}=${fmt(m.bonus)}`).join(" / ")}</b> sobre pico de cuentas activas. Morosos (§6.2): pedidos entregados sin cobro &gt;{MOROSO_DAYS}d.
       </div>
     </div>
 
@@ -1834,9 +2012,11 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
         </select>
       </div>
       {frozen ? <Badge text={`✅ Pagado ${fmtD(frozen.paidOn)}`} color="#1B7340" /> : <Badge text="🟡 En vivo" color="#F39C12" />}
+      {liveCalc?.phase2ActiveDuringMonth && <Badge text="Fase 2 activa" color="#1B7340" />}
+      {liveCalc?.tailDuringMonth && <Badge text="Cola post-salida" color="#888" />}
       <div style={{ flex: 1 }} />
       <Btn small onClick={exportCSV} disabled={!data || !data.lines || data.lines.length === 0}>📥 Export CSV</Btn>
-      {!frozen && data && data.totalCommission > 0 && <Btn small primary onClick={() => setShowFreezeConfirm(true)}>💵 Marcar como pagado</Btn>}
+      {!frozen && data && data.totalCommission !== 0 && <Btn small primary onClick={() => setShowFreezeConfirm(true)}>💵 Marcar como pagado</Btn>}
       {frozen && <Btn small danger onClick={unfreeze}>Descongelar</Btn>}
     </div>
 
@@ -1848,35 +2028,43 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
     ) : <>
       {/* Resumen cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
-        <Card title="Venta Neta (cobrada)" value={fmt(data.totalNetSales)} color="#1A5276" sub={`${data.lines.length} pedido${data.lines.length !== 1 ? "s" : ""}`} />
-        <Card title="Cuentas Nuevas (7%)" value={fmt(data.newCommission)} color="#1B7340" sub={`${data.lines.filter(l => l.classification === "Nueva").length} pedido${data.lines.filter(l => l.classification === "Nueva").length !== 1 ? "s" : ""}`} />
-        <Card title="Residual (5%)" value={fmt(data.residualCommission)} color="#6C3483" sub={`${data.lines.filter(l => l.classification === "Residual").length} pedido${data.lines.filter(l => l.classification === "Residual").length !== 1 ? "s" : ""}`} />
+        <Card title="Venta Neta (cobrada)" value={fmt(data.totalNetSales)} color="#1A5276" sub={`${data.lines.filter(l => l.kind !== "return").length} pedido${data.lines.filter(l => l.kind !== "return").length !== 1 ? "s" : ""}`} />
+        <Card title="Cuentas Nuevas" value={fmt(data.newCommission)} color="#1B7340" sub={`${data.lines.filter(l => l.classification.startsWith("Nueva")).length} línea${data.lines.filter(l => l.classification.startsWith("Nueva")).length !== 1 ? "s" : ""}`} />
+        <Card title="Residual" value={fmt(data.residualCommission)} color="#6C3483" sub={`${data.lines.filter(l => l.classification.startsWith("Residual")).length} línea${data.lines.filter(l => l.classification.startsWith("Residual")).length !== 1 ? "s" : ""}`} />
+        {data.phase2Bonus > 0 && <Card title="Fase 2 (+2%)" value={fmt(data.phase2Bonus)} color="#1B7340" sub="incluido arriba" />}
+        {data.refundCommission < 0 && <Card title="↩ Devoluciones" value={fmt(data.refundCommission)} color="#C41E3A" sub={`${fmt(data.totalRefunds)} devuelto`} />}
         <Card title="Milestones" value={fmt(data.milestoneBonus)} color="#D35400" sub={data.newMilestones && data.newMilestones.length > 0 ? data.newMilestones.map(m => `${m.count} cuentas`).join(", ") : `Pico: ${data.peakActive}`} />
         <Card title="TOTAL COMISIÓN" value={fmt(data.totalCommission)} color="#C41E3A" />
       </div>
 
       {/* Tabla de pedidos */}
       <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 0.8fr 0.6fr 1fr", padding: "8px 12px", background: "#f8f8f8", fontSize: 11, fontWeight: 700, color: "#555", borderBottom: "1px solid #eee" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.4fr 0.8fr 0.6fr 1fr", padding: "8px 12px", background: "#f8f8f8", fontSize: 11, fontWeight: 700, color: "#555", borderBottom: "1px solid #eee" }}>
           <div>Cliente</div>
           <div>Pedido</div>
-          <div>Fecha cobro</div>
+          <div>Fecha</div>
           <div style={{ textAlign: "right" }}>Venta Neta</div>
           <div>Clasificación</div>
           <div style={{ textAlign: "center" }}>Tasa</div>
           <div></div>
           <div style={{ textAlign: "right" }}>Comisión</div>
         </div>
-        {data.lines.map((l, i) => <div key={l.orderId} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 0.8fr 0.6fr 1fr", padding: "8px 12px", fontSize: 12, borderBottom: i < data.lines.length - 1 ? "1px solid #f5f5f5" : "none", background: l.classification === "Nueva" ? "#F0F9F0" : "#fff" }}>
-          <div style={{ fontWeight: 600 }}>{l.clientName}</div>
-          <div style={{ color: "#777", fontFamily: "monospace", fontSize: 10 }}>#{l.orderId.slice(-6)}</div>
-          <div>{fmtD(l.paidDate)}</div>
-          <div style={{ textAlign: "right" }}>{fmt(l.netSale)}</div>
-          <div><Badge text={l.classification} color={l.classification === "Nueva" ? "#1B7340" : "#6C3483"} /></div>
-          <div style={{ textAlign: "center", fontWeight: 600 }}>{(l.rate * 100).toFixed(0)}%</div>
-          <div></div>
-          <div style={{ textAlign: "right", fontWeight: 700, color: "#1B7340" }}>{fmt(l.commission)}</div>
-        </div>)}
+        {data.lines.map((l, i) => {
+          const isReturn = l.kind === "return";
+          const isNueva = l.classification.startsWith("Nueva");
+          const bg = isReturn ? "#FDF2F2" : isNueva ? "#F0F9F0" : l.tailApplied ? "#F5F5F5" : "#fff";
+          const badgeColor = isReturn ? "#C41E3A" : isNueva ? "#1B7340" : l.tailApplied ? "#888" : "#6C3483";
+          return <div key={l.orderId + (isReturn ? "-r" : "")} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.4fr 0.8fr 0.6fr 1fr", padding: "8px 12px", fontSize: 12, borderBottom: i < data.lines.length - 1 ? "1px solid #f5f5f5" : "none", background: bg }}>
+            <div style={{ fontWeight: 600 }}>{l.clientName}</div>
+            <div style={{ color: "#777", fontFamily: "monospace", fontSize: 10 }}>#{l.orderId.slice(-6)}</div>
+            <div>{fmtD(l.paidDate)}</div>
+            <div style={{ textAlign: "right", color: isReturn ? "#C41E3A" : "inherit" }}>{fmt(l.netSale)}</div>
+            <div><Badge text={l.classification} color={badgeColor} /></div>
+            <div style={{ textAlign: "center", fontWeight: 600 }}>{(l.rate * 100).toFixed(0)}%</div>
+            <div></div>
+            <div style={{ textAlign: "right", fontWeight: 700, color: l.commission < 0 ? "#C41E3A" : "#1B7340" }}>{fmt(l.commission)}</div>
+          </div>;
+        })}
       </div>
 
       {data.milestoneBonus > 0 && data.newMilestones && data.newMilestones.length > 0 && <div style={{ marginTop: 12, padding: "12px 16px", background: "#FFF8E1", borderLeft: "4px solid #F39C12", borderRadius: 8 }}>
@@ -1885,8 +2073,25 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
         <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>Al marcar como pagado, estos milestones se registrarán en el representante y no volverán a generar bono.</div>
       </div>}
 
+      {data.repTerminated && <div style={{ marginTop: 12, padding: "12px 16px", background: "#F5F5F5", borderLeft: "4px solid #888", borderRadius: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#555", marginBottom: 4 }}>📋 Cola post-salida (§10.3)</div>
+        <div style={{ fontSize: 12, color: "#555" }}>Representante terminado: <b>{fmtD(rep.terminatedDate)}</b>. Durante {POST_TERMINATION_TAIL_MONTHS} meses se paga residual flat <b>{Math.round(COMM_RATE_RESIDUAL * 100)}%</b> sobre cuentas existentes; sin Fase 2, sin milestones, sin nuevas cuentas a {Math.round(COMM_RATE_NEW * 100)}%.</div>
+      </div>}
+
+      {/* Deploy C: Morosos info */}
+      {liveCalc?.morosos && liveCalc.morosos.length > 0 && <div style={{ marginTop: 12, padding: "12px 16px", background: "#FDF2E9", borderLeft: "4px solid #D35400", borderRadius: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#D35400", marginBottom: 6 }}>🟠 Morosos &gt;{MOROSO_DAYS}d sin cobrar (§6.2) — informativo</div>
+        <div style={{ fontSize: 11, color: "#777", marginBottom: 8 }}>Estos pedidos están entregados pero no cobrados. No generan comisión hasta que cambien a status <b>paid</b>. Si nunca se cobran, no entran al cálculo.</div>
+        {liveCalc.morosos.slice(0, 8).map(m => <div key={m.order.id} style={{ fontSize: 12, padding: "3px 0", display: "flex", justifyContent: "space-between" }}>
+          <span><b>{m.client?.name || "?"}</b> <span style={{ color: "#999" }}>#{m.order.id.slice(-6)}</span> — entregado {fmtD(m.order.date)}</span>
+          <span style={{ color: "#C41E3A", fontWeight: 600 }}>{fmt(m.order.total)} • {m.daysOverdue}d vencido</span>
+        </div>)}
+        {liveCalc.morosos.length > 8 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...y {liveCalc.morosos.length - 8} más</div>}
+      </div>}
+
       <div style={{ marginTop: 14, fontSize: 11, color: "#999", textAlign: "center" }}>
         Pico de cuentas activas en {monthLabel(selectedMonth)}: <b>{data.peakActive}</b> • Hoy: <b>{data.activeNow !== undefined ? data.activeNow : "—"}</b>
+        {data.totalRefunds > 0 && <> • Refunds del mes: <b style={{ color: "#C41E3A" }}>{fmt(data.totalRefunds)}</b></>}
       </div>
     </>}
 
@@ -1894,8 +2099,10 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
       <div style={{ fontSize: 13, color: "#333", lineHeight: 1.6 }}>
         <p>Vas a congelar el reporte de <b>{rep.name}</b> para <b>{monthLabel(selectedMonth)}</b>:</p>
         <div style={{ background: "#f8f8f8", padding: "12px 16px", borderRadius: 6, margin: "10px 0", fontFamily: "monospace", fontSize: 12 }}>
-          Cuentas Nuevas (7%): {fmt(liveCalc.newCommission)}<br />
-          Residual (5%):       {fmt(liveCalc.residualCommission)}<br />
+          Cuentas Nuevas:      {fmt(liveCalc.newCommission)}<br />
+          Residual:            {fmt(liveCalc.residualCommission)}<br />
+          {liveCalc.phase2Bonus > 0 && <>  (incluye Fase 2): {fmt(liveCalc.phase2Bonus)}<br /></>}
+          {liveCalc.refundCommission < 0 && <>Devoluciones:        {fmt(liveCalc.refundCommission)}<br /></>}
           Milestones:          {fmt(liveCalc.milestoneBonus)}<br />
           ─────────────────────────────<br />
           <b>TOTAL: {fmt(liveCalc.totalCommission)}</b>
@@ -1982,7 +2189,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.15" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.16" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -2166,7 +2373,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.15</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.16</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
