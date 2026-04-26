@@ -2039,7 +2039,7 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
 
       {/* Tabla de pedidos */}
       <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.4fr 0.8fr 0.6fr 1fr", padding: "8px 12px", background: "#f8f8f8", fontSize: 11, fontWeight: 700, color: "#555", borderBottom: "1px solid #eee" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.4fr 0.8fr 0.6fr 1fr", gap: 10, padding: "8px 12px", background: "#f8f8f8", fontSize: 11, fontWeight: 700, color: "#555", borderBottom: "1px solid #eee" }}>
           <div>Cliente</div>
           <div>Pedido</div>
           <div>Fecha</div>
@@ -2054,7 +2054,7 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
           const isNueva = l.classification.startsWith("Nueva");
           const bg = isReturn ? "#FDF2F2" : isNueva ? "#F0F9F0" : l.tailApplied ? "#F5F5F5" : "#fff";
           const badgeColor = isReturn ? "#C41E3A" : isNueva ? "#1B7340" : l.tailApplied ? "#888" : "#6C3483";
-          return <div key={l.orderId + (isReturn ? "-r" : "")} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.4fr 0.8fr 0.6fr 1fr", padding: "8px 12px", fontSize: 12, borderBottom: i < data.lines.length - 1 ? "1px solid #f5f5f5" : "none", background: bg }}>
+          return <div key={l.orderId + (isReturn ? "-r" : "")} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.4fr 0.8fr 0.6fr 1fr", gap: 10, padding: "8px 12px", fontSize: 12, borderBottom: i < data.lines.length - 1 ? "1px solid #f5f5f5" : "none", background: bg }}>
             <div style={{ fontWeight: 600 }}>{l.clientName}</div>
             <div style={{ color: "#777", fontFamily: "monospace", fontSize: 10 }}>#{l.orderId.slice(-6)}</div>
             <div>{fmtD(l.paidDate)}</div>
