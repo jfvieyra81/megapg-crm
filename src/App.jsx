@@ -2078,22 +2078,22 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
         <div style={{ fontSize: 12, color: "#555" }}>Representante terminado: <b>{fmtD(rep.terminatedDate)}</b>. Durante {POST_TERMINATION_TAIL_MONTHS} meses se paga residual flat <b>{Math.round(COMM_RATE_RESIDUAL * 100)}%</b> sobre cuentas existentes; sin Fase 2, sin milestones, sin nuevas cuentas a {Math.round(COMM_RATE_NEW * 100)}%.</div>
       </div>}
 
-      {/* Deploy C: Morosos info */}
-      {liveCalc?.morosos && liveCalc.morosos.length > 0 && <div style={{ marginTop: 12, padding: "12px 16px", background: "#FDF2E9", borderLeft: "4px solid #D35400", borderRadius: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#D35400", marginBottom: 6 }}>🟠 Morosos &gt;{MOROSO_DAYS}d sin cobrar (§6.2) — informativo</div>
-        <div style={{ fontSize: 11, color: "#777", marginBottom: 8 }}>Estos pedidos están entregados pero no cobrados. No generan comisión hasta que cambien a status <b>paid</b>. Si nunca se cobran, no entran al cálculo.</div>
-        {liveCalc.morosos.slice(0, 8).map(m => <div key={m.order.id} style={{ fontSize: 12, padding: "3px 0", display: "flex", justifyContent: "space-between" }}>
-          <span><b>{m.client?.name || "?"}</b> <span style={{ color: "#999" }}>#{m.order.id.slice(-6)}</span> — entregado {fmtD(m.order.date)}</span>
-          <span style={{ color: "#C41E3A", fontWeight: 600 }}>{fmt(m.order.total)} • {m.daysOverdue}d vencido</span>
-        </div>)}
-        {liveCalc.morosos.length > 8 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...y {liveCalc.morosos.length - 8} más</div>}
-      </div>}
-
       <div style={{ marginTop: 14, fontSize: 11, color: "#999", textAlign: "center" }}>
         Pico de cuentas activas en {monthLabel(selectedMonth)}: <b>{data.peakActive}</b> • Hoy: <b>{data.activeNow !== undefined ? data.activeNow : "—"}</b>
         {data.totalRefunds > 0 && <> • Refunds del mes: <b style={{ color: "#C41E3A" }}>{fmt(data.totalRefunds)}</b></>}
       </div>
     </>}
+
+    {/* Deploy C: Morosos info — siempre visible si hay morosos, aunque no haya cobros del mes */}
+    {liveCalc?.morosos && liveCalc.morosos.length > 0 && <div style={{ marginTop: 12, padding: "12px 16px", background: "#FDF2E9", borderLeft: "4px solid #D35400", borderRadius: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#D35400", marginBottom: 6 }}>🟠 Morosos &gt;{MOROSO_DAYS}d sin cobrar (§6.2) — informativo</div>
+      <div style={{ fontSize: 11, color: "#777", marginBottom: 8 }}>Estos pedidos están entregados pero no cobrados. No generan comisión hasta que cambien a status <b>paid</b>. Si nunca se cobran, no entran al cálculo.</div>
+      {liveCalc.morosos.slice(0, 8).map(m => <div key={m.order.id} style={{ fontSize: 12, padding: "3px 0", display: "flex", justifyContent: "space-between" }}>
+        <span><b>{m.client?.name || "?"}</b> <span style={{ color: "#999" }}>#{m.order.id.slice(-6)}</span> — entregado {fmtD(m.order.date)}</span>
+        <span style={{ color: "#C41E3A", fontWeight: 600 }}>{fmt(m.order.total)} • {m.daysOverdue}d vencido</span>
+      </div>)}
+      {liveCalc.morosos.length > 8 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...y {liveCalc.morosos.length - 8} más</div>}
+    </div>}
 
     {showFreezeConfirm && <Modal title="Confirmar pago de comisión" onClose={() => setShowFreezeConfirm(false)}>
       <div style={{ fontSize: 13, color: "#333", lineHeight: 1.6 }}>
