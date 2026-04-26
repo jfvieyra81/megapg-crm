@@ -1,6 +1,6 @@
 // Service Worker for Dulce Sabor CRM PWA
 // Bumped version on every release so browsers fetch fresh assets.
-const CACHE_NAME = "megapg-v5.15";
+const CACHE_NAME = "megapg-v5.16";
 const ASSETS = ["/", "/index.html", "/manifest.json", "/logo.png"];
 
 self.addEventListener("install", (event) => {
