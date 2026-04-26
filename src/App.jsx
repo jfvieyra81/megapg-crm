@@ -289,6 +289,42 @@ const syncAllPublicStores = async (clients, orders) => {
   return { ok: errors === 0, published, removed, errors };
 };
 
+// === D1 (v5.17): Cloud sync — generic upsert para clients/orders/representatives/commissions ===
+const CLOUD_SYNCED_KEY = "ds-cloud-synced-v1";
+const cloudIsSynced = () => { try { return localStorage.getItem(CLOUD_SYNCED_KEY) === "1"; } catch { return false; } };
+const setCloudSyncedFlag = (yes) => { try { yes ? localStorage.setItem(CLOUD_SYNCED_KEY, "1") : localStorage.removeItem(CLOUD_SYNCED_KEY); } catch {} };
+
+// Translate localStorage shape (camelCase) → Supabase row shape (snake_case top-level + JSONB data)
+const serializeForCloud = (table, item) => {
+  const updated_at = new Date().toISOString();
+  if (table === "clients") return { id: item.id, representative_id: item.representativeId || null, data: item, updated_at };
+  if (table === "orders") return { id: item.id, client_id: item.clientId, status: item.status || "pending", paid_date: item.paidDate || null, data: item, updated_at };
+  if (table === "representatives") return { id: item.id, data: item, updated_at };
+  if (table === "commissions") return { id: item.id, representative_id: item.representativeId, month: item.month, data: item, updated_at };
+  return item;
+};
+
+const cloudUpsert = async (table, items) => {
+  if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
+  if (!Array.isArray(items)) items = [items];
+  if (items.length === 0) return { ok: true, count: 0 };
+  const rows = items.map(it => serializeForCloud(table, it));
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?on_conflict=id`, {
+      method: "POST",
+      headers: { ...SUPA_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(rows)
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      return { ok: false, error: `HTTP ${r.status}: ${txt.slice(0, 250)}` };
+    }
+    return { ok: true, count: rows.length };
+  } catch (e) {
+    return { ok: false, error: e.message || "Network error" };
+  }
+};
+
 // FIX #4: Calcula semanas reales desde la primera orden en lugar de hardcodear /4
 const calcWeeks = (orders) => {
   if (orders.length === 0) return 1;
@@ -2171,7 +2207,58 @@ export default function App() {
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
 
-  const sv = useCallback((type, data) => { stateRef.current = { ...stateRef.current, [type]: data }; S.save({ ...stateRef.current, init: true }); }, []);
+  // === D1 (v5.17): Cloud sync state ===
+  const [cloudStatus, setCloudStatus] = useState(() => {
+    if (!cloudEnabled) return "disabled";
+    return cloudIsSynced() ? "synced" : "unsynced";
+  });
+  const [cloudError, setCloudError] = useState(null);
+  const [showMigrateModal, setShowMigrateModal] = useState(false);
+  const [migrateStep, setMigrateStep] = useState(null);
+  const [migrateResults, setMigrateResults] = useState({});
+
+  const sv = useCallback((type, data) => {
+    stateRef.current = { ...stateRef.current, [type]: data };
+    S.save({ ...stateRef.current, init: true });
+    // D1: auto-sync to cloud on save (fire-and-forget) if migration done
+    if (cloudEnabled && cloudIsSynced() && ["clients", "orders", "representatives", "commissions"].includes(type)) {
+      setCloudStatus("syncing");
+      cloudUpsert(type, data).then(r => {
+        if (r.ok) { setCloudStatus("synced"); setCloudError(null); }
+        else { setCloudStatus("error"); setCloudError(r.error); }
+      }).catch(e => { setCloudStatus("error"); setCloudError(e.message); });
+    }
+  }, []);
+
+  // === D1: Bulk migration localStorage → Supabase ===
+  const migrateToCloud = async () => {
+    if (!cloudEnabled) { alert("Supabase no está configurado en este build."); return; }
+    setShowMigrateModal(true);
+    setMigrateStep("starting");
+    setMigrateResults({});
+    setCloudError(null);
+
+    const types = ["representatives", "clients", "orders", "commissions"];
+    const results = {};
+
+    for (const t of types) {
+      setMigrateStep(t);
+      const items = stateRef.current[t] || [];
+      const r = await cloudUpsert(t, items);
+      results[t] = { ok: r.ok, count: items.length, error: r.error };
+      setMigrateResults({ ...results });
+      if (!r.ok) {
+        setMigrateStep("error");
+        setCloudStatus("error");
+        setCloudError(`Error en ${t}: ${r.error}`);
+        return;
+      }
+    }
+
+    setCloudSyncedFlag(true);
+    setCloudStatus("synced");
+    setMigrateStep("done");
+  };
 
   // Listen for representatives updates from inside Commissions (when freezing milestones)
   useEffect(() => {
@@ -2189,7 +2276,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.16" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.17" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -2373,10 +2460,18 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.16</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.17</span>
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
+        {/* D1 (v5.17): Cloud sync indicator */}
+        {cloudEnabled && (cloudStatus === "unsynced"
+          ? <button onClick={migrateToCloud} title="Migra todo tu localStorage a Supabase (one-shot)" style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#1A5276", border: "none", borderRadius: 4, padding: "3px 8px", cursor: "pointer" }}>☁️ Migrar al cloud</button>
+          : <button onClick={migrateToCloud} title={cloudError || "Sync activo. Click para re-sincronizar todo."} style={{ fontSize: 10, fontWeight: 600, background: "none", border: `1px solid ${cloudStatus === "error" ? "#C41E3A" : cloudStatus === "syncing" ? "#F39C12" : "#1B7340"}`, color: cloudStatus === "error" ? "#C41E3A" : cloudStatus === "syncing" ? "#B7950B" : "#1B7340", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>
+              {cloudStatus === "synced" && "☁️ ✓"}
+              {cloudStatus === "syncing" && "☁️ ⏳"}
+              {cloudStatus === "error" && "☁️ ⚠️"}
+            </button>)}
         <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives, commissions: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setRepresentatives(defaultRepresentatives); setCommissions([]); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
@@ -2399,5 +2494,36 @@ export default function App() {
       {tab === "analysis" && <FieldExport visits={visits} />}
     </div>
     {showVisitForm && <VisitForm onSave={saveVisit} onClose={() => { setShowVisitForm(false); setEditVisit(null); }} editVisit={editVisit} />}
+
+    {/* === D1 (v5.17): Migration progress modal === */}
+    {showMigrateModal && <Modal title="☁️ Migración a Supabase" onClose={() => (migrateStep === "done" || migrateStep === "error") && setShowMigrateModal(false)}>
+      {migrateStep === "starting" && <p style={{ fontSize: 13, color: "#555" }}>Iniciando migración...</p>}
+      {(["representatives", "clients", "orders", "commissions"].includes(migrateStep)) && <div style={{ fontSize: 13, color: "#555" }}>
+        <p>Subiendo <b>{migrateStep}</b>...</p>
+        <div style={{ background: "#f8f8f8", borderRadius: 6, padding: "10px 14px", fontFamily: "monospace", fontSize: 12 }}>
+          {Object.entries(migrateResults).map(([k, v]) => <div key={k}>{v.ok ? "✓" : "✗"} {k}: {v.count} registros{v.error ? ` — ${v.error}` : ""}</div>)}
+          <div>⏳ {migrateStep}...</div>
+        </div>
+      </div>}
+      {migrateStep === "done" && <div style={{ fontSize: 13, color: "#555" }}>
+        <p style={{ color: "#1B7340", fontWeight: 700, fontSize: 15 }}>✅ Migración completa</p>
+        <div style={{ background: "#E8F5E8", borderRadius: 6, padding: "10px 14px", fontFamily: "monospace", fontSize: 12, margin: "10px 0" }}>
+          {Object.entries(migrateResults).map(([k, v]) => <div key={k}>✓ {k}: <b>{v.count}</b> registros subidos</div>)}
+        </div>
+        <p style={{ fontSize: 12, color: "#777" }}>De ahora en adelante, cada cambio que hagas se sincronizará automáticamente al cloud (badge ☁️ ✓ en la barra superior). Si aparece ☁️ ⚠️ pasa el cursor encima para ver el error.</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><Btn primary onClick={() => setShowMigrateModal(false)}>OK</Btn></div>
+      </div>}
+      {migrateStep === "error" && <div style={{ fontSize: 13, color: "#555" }}>
+        <p style={{ color: "#C41E3A", fontWeight: 700, fontSize: 15 }}>❌ Error en la migración</p>
+        <div style={{ background: "#FDF2F2", borderRadius: 6, padding: "10px 14px", fontFamily: "monospace", fontSize: 11, margin: "10px 0", color: "#C41E3A", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {cloudError}
+        </div>
+        <div style={{ background: "#f8f8f8", borderRadius: 6, padding: "10px 14px", fontFamily: "monospace", fontSize: 12, margin: "10px 0" }}>
+          {Object.entries(migrateResults).map(([k, v]) => <div key={k}>{v.ok ? "✓" : "✗"} {k}: {v.count} registros{v.error ? ` — ${v.error}` : ""}</div>)}
+        </div>
+        <p style={{ fontSize: 12, color: "#777" }}>¿Causas comunes? (1) No corriste el SQL D1 en Supabase. (2) Las RLS policies no permiten anon. (3) Una tabla tiene restricción de FK que falla. Mándale captura de este error a Claude.</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><Btn onClick={() => setShowMigrateModal(false)}>Cerrar</Btn></div>
+      </div>}
+    </Modal>}
   </div>;
 }
