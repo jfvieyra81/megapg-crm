@@ -312,7 +312,7 @@ const cloudUpsert = async (table, items) => {
   try {
     const r = await fetch(`${SUPA_URL}/rest/v1/${table}?on_conflict=id`, {
       method: "POST",
-      headers: { ...SUPA_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal" },
+      headers: { ...authedHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify(rows)
     });
     if (!r.ok) {
@@ -323,6 +323,104 @@ const cloudUpsert = async (table, items) => {
   } catch (e) {
     return { ok: false, error: e.message || "Network error" };
   }
+};
+
+// === D2 (v5.18): Supabase Auth ===
+const AUTH_TOKEN_KEY = "ds-supabase-auth";
+const authStore = {
+  get() { try { return JSON.parse(localStorage.getItem(AUTH_TOKEN_KEY) || "null"); } catch { return null; } },
+  set(session) { try { localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session)); } catch {} },
+  clear() { try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch {} }
+};
+
+// Returns headers WITH Bearer = access_token if logged in, else Bearer = anon key
+const authedHeaders = () => {
+  const session = authStore.get();
+  const token = session?.access_token || SUPA_KEY;
+  return { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${token}`, "Prefer": "return=representation" };
+};
+
+// Send OTP magic link to email
+const authSendMagicLink = async (email) => {
+  if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
+  try {
+    const r = await fetch(`${SUPA_URL}/auth/v1/otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPA_KEY },
+      body: JSON.stringify({ email, options: { email_redirect_to: window.location.origin } })
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      return { ok: false, error: `HTTP ${r.status}: ${txt.slice(0, 250)}` };
+    }
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message || "Network error" }; }
+};
+
+// Parse magic link tokens from URL hash (#access_token=...&refresh_token=...)
+const authParseHashTokens = () => {
+  const hash = window.location.hash;
+  if (!hash || !hash.includes("access_token=")) return null;
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const access_token = params.get("access_token");
+  const refresh_token = params.get("refresh_token");
+  const expires_at = parseInt(params.get("expires_at") || "0", 10);
+  if (!access_token) return null;
+  return { access_token, refresh_token, expires_at };
+};
+
+// Get user info from Supabase using the access_token
+const authGetUser = async (access_token) => {
+  if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
+  try {
+    const r = await fetch(`${SUPA_URL}/auth/v1/user`, {
+      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${access_token}` }
+    });
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+    const user = await r.json();
+    return { ok: true, user };
+  } catch (e) { return { ok: false, error: e.message }; }
+};
+
+// Refresh token if expired
+const authRefreshSession = async (refresh_token) => {
+  if (!cloudEnabled || !refresh_token) return { ok: false };
+  try {
+    const r = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPA_KEY },
+      body: JSON.stringify({ refresh_token })
+    });
+    if (!r.ok) return { ok: false };
+    const data = await r.json();
+    return { ok: true, session: data };
+  } catch { return { ok: false }; }
+};
+
+// Look up app_user row by auth_user_id (returns role + representative_id)
+const authLookupAppUser = async (auth_user_id, access_token) => {
+  if (!cloudEnabled) return null;
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/app_users?auth_user_id=eq.${auth_user_id}&select=role,representative_id,email`, {
+      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${access_token}` }
+    });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return rows[0] || null;
+  } catch { return null; }
+};
+
+const authLogout = async () => {
+  const session = authStore.get();
+  if (session?.access_token && cloudEnabled) {
+    try {
+      await fetch(`${SUPA_URL}/auth/v1/logout`, {
+        method: "POST",
+        headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${session.access_token}` }
+      });
+    } catch {}
+  }
+  authStore.clear();
 };
 
 // FIX #4: Calcula semanas reales desde la primera orden en lugar de hardcodear /4
@@ -2153,6 +2251,74 @@ const Commissions = ({ representatives, clients, orders, commissions, setCommiss
   </div>;
 };
 
+// ============================================================
+// LOGIN SCREEN (Deploy D2) — Magic link + access denied
+// ============================================================
+const LoginScreen = ({ onLoginSuccess }) => {
+  const [email, setEmail] = useState("");
+  const [step, setStep] = useState("idle"); // idle | sending | sent | error
+  const [error, setError] = useState(null);
+
+  const send = async () => {
+    if (!email || !email.includes("@")) { setError("Ingresa un email válido"); return; }
+    setStep("sending");
+    setError(null);
+    const r = await authSendMagicLink(email.trim().toLowerCase());
+    if (r.ok) setStep("sent");
+    else { setStep("error"); setError(r.error); }
+  };
+
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #FDF2E9 0%, #FEF9E7 100%)", padding: 20 }}>
+    <div style={{ maxWidth: 420, width: "100%", background: "#fff", borderRadius: 12, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <img src="/logo.png" alt="Dulce Sabor" style={{ height: 56, width: "auto" }} onError={e => { e.currentTarget.style.display = "none"; }} />
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#C41E3A" }}>Dulce Sabor CRM</div>
+          <div style={{ fontSize: 12, color: "#888" }}>v5.18 — Acceso protegido</div>
+        </div>
+      </div>
+
+      {step === "idle" && <>
+        <p style={{ fontSize: 13, color: "#555", lineHeight: 1.5, marginBottom: 18 }}>Ingresa tu email autorizado. Te enviaremos un enlace mágico para entrar (sin contraseña).</p>
+        <label style={{ fontSize: 11, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Email</label>
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder="tu@email.com" autoFocus style={{ width: "100%", padding: "10px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, marginBottom: 14, boxSizing: "border-box" }} />
+        {error && <div style={{ fontSize: 12, color: "#C41E3A", marginBottom: 12 }}>{error}</div>}
+        <Btn primary onClick={send} style={{ width: "100%", padding: "10px 0" }}>Enviar enlace mágico</Btn>
+      </>}
+
+      {step === "sending" && <p style={{ fontSize: 13, color: "#555", textAlign: "center", padding: 20 }}>⏳ Enviando enlace a <b>{email}</b>...</p>}
+
+      {step === "sent" && <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>📨</div>
+        <p style={{ fontSize: 15, fontWeight: 700, color: "#1B7340", marginBottom: 8 }}>¡Enlace enviado!</p>
+        <p style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>Revisa tu inbox en <b>{email}</b>. Click el enlace y volverás aquí ya logueado. El enlace expira en ~1 hora.</p>
+        <p style={{ fontSize: 11, color: "#999", marginTop: 16 }}>¿No llegó? Revisa spam, o <button onClick={() => setStep("idle")} style={{ background: "none", border: "none", color: "#1A5276", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}>vuelve a intentar</button>.</p>
+      </div>}
+
+      {step === "error" && <div>
+        <div style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>⚠️</div>
+        <p style={{ fontSize: 13, color: "#C41E3A", textAlign: "center", marginBottom: 12 }}>Error: {error}</p>
+        <Btn onClick={() => { setStep("idle"); setError(null); }} style={{ width: "100%" }}>Volver a intentar</Btn>
+      </div>}
+
+      <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #eee", fontSize: 11, color: "#999", textAlign: "center" }}>
+        Solo emails autorizados pueden entrar. Si tu email no está en la lista, contacta al admin.
+      </div>
+    </div>
+  </div>;
+};
+
+const AccessDeniedScreen = ({ email, onLogout }) => {
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #FDF2F2 0%, #FEF9E7 100%)", padding: 20 }}>
+    <div style={{ maxWidth: 420, width: "100%", background: "#fff", borderRadius: 12, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)", textAlign: "center" }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>🚫</div>
+      <p style={{ fontSize: 17, fontWeight: 700, color: "#C41E3A", marginBottom: 8 }}>Acceso no autorizado</p>
+      <p style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>El email <b>{email}</b> está autenticado pero no está registrado en el CRM. Contacta al admin para que te dé acceso.</p>
+      <Btn onClick={onLogout} style={{ marginTop: 18 }}>Cerrar sesión</Btn>
+    </div>
+  </div>;
+};
+
 export default function App() {
   const saved = S.load();
   const defaultCampaign = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
@@ -2217,6 +2383,70 @@ export default function App() {
   const [migrateStep, setMigrateStep] = useState(null);
   const [migrateResults, setMigrateResults] = useState({});
 
+  // === D2 (v5.18): Auth state ===
+  // authState: "checking" → loading on first paint, "loggedOut" → show LoginScreen,
+  //            "denied" → show AccessDeniedScreen, "ready" → show CRM
+  // If cloudEnabled is false (no Supabase config), we skip auth entirely (legacy mode).
+  const [authState, setAuthState] = useState(cloudEnabled ? "checking" : "ready");
+  const [currentUser, setCurrentUser] = useState(null); // { email, role, representativeId, auth_user_id }
+
+  // Bootstrap auth on mount: parse magic-link hash, validate session, lookup app_user
+  useEffect(() => {
+    if (!cloudEnabled) return;
+
+    (async () => {
+      // 1. Check if magic link tokens are in URL
+      const hashTokens = authParseHashTokens();
+      if (hashTokens) {
+        authStore.set(hashTokens);
+        // Clean URL so we don't re-parse on refresh
+        try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch {}
+      }
+
+      // 2. Get current session from storage
+      let session = authStore.get();
+      if (!session?.access_token) { setAuthState("loggedOut"); return; }
+
+      // 3. Check if expired; refresh if needed
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (session.expires_at && session.expires_at < nowSec + 60) {
+        const refreshed = await authRefreshSession(session.refresh_token);
+        if (!refreshed.ok) { authStore.clear(); setAuthState("loggedOut"); return; }
+        session = refreshed.session;
+        authStore.set(session);
+      }
+
+      // 4. Validate token by fetching user
+      const userR = await authGetUser(session.access_token);
+      if (!userR.ok) { authStore.clear(); setAuthState("loggedOut"); return; }
+
+      // 5. Look up app_user row → role, representative_id
+      const appUser = await authLookupAppUser(userR.user.id, session.access_token);
+      if (!appUser) {
+        // Authenticated, but no entry in app_users → access denied
+        setCurrentUser({ email: userR.user.email, role: null, representativeId: null, auth_user_id: userR.user.id });
+        setAuthState("denied");
+        return;
+      }
+
+      setCurrentUser({
+        email: userR.user.email,
+        role: appUser.role,
+        representativeId: appUser.representative_id,
+        auth_user_id: userR.user.id
+      });
+      setAuthState("ready");
+    })();
+  }, []);
+
+  const handleLogout = async () => {
+    await authLogout();
+    setCurrentUser(null);
+    setAuthState("loggedOut");
+    // Hard reload to flush all in-memory state
+    setTimeout(() => window.location.reload(), 100);
+  };
+
   const sv = useCallback((type, data) => {
     stateRef.current = { ...stateRef.current, [type]: data };
     S.save({ ...stateRef.current, init: true });
@@ -2276,7 +2506,7 @@ export default function App() {
 
   const importRef = useRef();
   const exportData = () => {
-    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.17" };
+    const backup = { ...stateRef.current, init: true, exportDate: new Date().toISOString(), version: "v5.18" };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -2456,11 +2686,19 @@ export default function App() {
   }, []);
 
   const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+
+  // === D2 (v5.18): Auth gate ===
+  if (authState === "checking") return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FDF2E9" }}><div style={{ fontSize: 14, color: "#888" }}>⏳ Verificando sesión...</div></div>;
+  if (authState === "loggedOut") return <LoginScreen />;
+  if (authState === "denied") return <AccessDeniedScreen email={currentUser?.email} onLogout={handleLogout} />;
+
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.17</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.18</span>
+        {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
+        {currentUser && <button onClick={handleLogout} title="Cerrar sesión" style={{ fontSize: 10, color: "#888", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Logout</button>}
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
