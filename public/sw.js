@@ -1,6 +1,6 @@
 // Service Worker for Dulce Sabor CRM PWA
 // Bumped version on every release so browsers fetch fresh assets.
-const CACHE_NAME = "megapg-v5.18";
+const CACHE_NAME = "megapg-v5.18.1";
 const ASSETS = ["/", "/index.html", "/manifest.json", "/logo.png"];
 
 self.addEventListener("install", (event) => {
@@ -22,6 +22,10 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  // Skip Supabase API calls — let them go through directly without SW interference
+  const url = event.request.url;
+  if (url.includes(".supabase.co") || url.includes(".supabase.in")) return;
+
   // Network-first for HTML; cache-first for other assets
   if (event.request.mode === "navigate") {
     event.respondWith(
