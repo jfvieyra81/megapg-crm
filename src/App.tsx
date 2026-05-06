@@ -1,38 +1,107 @@
 // @ts-nocheck
-// TODO refactor v5.19+ — quitar este pragma cuando todo App.tsx esté tipado en bloques.
-//
-// Bloques tipados a la fecha (extraídos a archivos .ts):
-//   - src/lib/contract.ts  (constantes contractuales del Representante v2)
-//
-// Pendiente (futuras sesiones):
-//   - tipos de domain: Client, Order, Visit, Representative, Commission, Visit, etc.
-//   - tipado de hooks (useState<T>, props de componentes)
-//   - eliminar implicit any restantes
-//
-// Mientras este pragma exista, TypeScript NO valida este archivo, pero todos
-// los .ts importados (incluyendo contract.ts) sí se validan en strict mode.
+// ─────────────────────────────────────────────────────────────────────────────
+// Refactor en progreso — bloques 2A + 2B completados.
+//   2A: constantes y utilidades puras tipadas (PRODUCTS, MILESTONES, helpers).
+//   2B: tipo Client + propagación al componente Clients.
+//   2C: pendiente — tipo Order + componente Orders.
+//   2D: pendiente — Visit, Representative, Commission.
+// Este archivo usa @ts-nocheck temporalmente porque la migración a TypeScript
+// es incremental. Lo de abajo está tipado; el resto se irá tipando en los
+// bloques siguientes. Cuando los 4 bloques estén completos, se quita este
+// pragma y el archivo entra a strict mode.
+// ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type Dispatch, type SetStateAction, type ChangeEvent } from "react";
 import { jsPDF } from "jspdf";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
-import {
-  ACTIVE_ACCOUNT_DAYS,
-  NEW_ACCOUNT_LOOKBACK_DAYS,
-  COMM_RATE_NEW,
-  COMM_RATE_RESIDUAL,
-  COMM_RATE_PHASE2_BONUS,
-  MILESTONES,
-  MOROSO_DAYS,
-  POST_TERMINATION_TAIL_MONTHS,
-  REP_FRANCISCO_ID,
-} from "./lib/contract";
 
-const SUPA_URL = SUPABASE_URL && SUPABASE_URL !== "YOUR_PROJECT_URL_HERE" ? SUPABASE_URL : null;
-const SUPA_KEY = SUPABASE_KEY && SUPABASE_KEY !== "YOUR_ANON_KEY_HERE" ? SUPABASE_KEY : null;
-const SUPA_HEADERS = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
-const cloudEnabled = !!(SUPA_URL && SUPA_KEY);
+// ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
+export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
+export type OrderStatus = "pending" | "delivered" | "paid";
+export type Brand = "Mega PG" | "Pigüi USA" | "Both" | "Neither/Unknown";
 
-const PRODUCTS = [
+export type Product = {
+  readonly id: string;
+  readonly name: string;
+  readonly sku: string;
+  readonly price: number;
+  readonly cost: number;
+  readonly bags: number;
+};
+
+export type Milestone = {
+  readonly count: number;
+  readonly bonus: number;
+};
+
+// ─── Bloque 2B: Client ────────────────────────────────────────────────────────
+// Cliente del CRM. Forma derivada del código real del archivo (formulario de
+// alta/edición + clientes creados desde import de pedidos web). Los campos
+// requeridos son los que SIEMPRE están presentes (id se asigna en `uid()` al
+// crear; name y tier son obligatorios en el form). El resto es opcional porque
+// el código en varios lugares hace `c.zone || ""`, `c.phone && ...`, etc.,
+// reflejando que pueden venir vacíos o ausentes (clientes legacy / web import
+// con datos parciales).
+export interface Client {
+  // Identidad
+  readonly id: string;
+  name: string;
+  tier: Tier;
+
+  // Contacto
+  contact?: string;
+  phone?: string;
+  address?: string;
+  zone?: string;
+  notes?: string;
+
+  // Storefront público (sync a dulcesaborca.com/donde-comprar)
+  showOnWebsite?: boolean;
+  publicDisplayName?: string;
+  publicHours?: string;
+  publicPhotoUrl?: string;
+  websitePermissionDate?: string;
+  permissionConfirmed?: boolean;
+
+  // Asignación de representante (Contrato §1)
+  representativeId?: string;
+  priorHistoryBeforeRep?: boolean;
+
+  // Audit
+  created?: string;
+  source?: string;
+}
+
+// Estado del formulario de alta/edición del componente Clients. NO incluye
+// `id`, `created`, `source` — esos se asignan al guardar (o vienen del cliente
+// existente al editar). Todos los campos son requeridos como string/boolean
+// con defaults vacíos para que React no se queje de inputs uncontrolled.
+export interface ClientFormState {
+  name: string;
+  address: string;
+  phone: string;
+  contact: string;
+  zone: string;
+  tier: Tier;
+  notes: string;
+  showOnWebsite: boolean;
+  publicDisplayName: string;
+  publicHours: string;
+  publicPhotoUrl: string;
+  websitePermissionDate: string;
+  permissionConfirmed: boolean;
+  representativeId: string;
+  priorHistoryBeforeRep: boolean;
+}
+
+// ─── Configuración de Supabase ────────────────────────────────────────────────
+const SUPA_URL: string | null = SUPABASE_URL && SUPABASE_URL !== "YOUR_PROJECT_URL_HERE" ? SUPABASE_URL : null;
+const SUPA_KEY: string | null = SUPABASE_KEY && SUPABASE_KEY !== "YOUR_ANON_KEY_HERE" ? SUPABASE_KEY : null;
+const SUPA_HEADERS: Record<string, string> = { "Content-Type": "application/json", "apikey": SUPA_KEY as string, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
+const cloudEnabled: boolean = !!(SUPA_URL && SUPA_KEY);
+
+// ─── Catálogo de productos ────────────────────────────────────────────────────
+const PRODUCTS: readonly Product[] = [
   // SLAPS LOLLIPOPS
   { id: "slaps-mix", name: "Slaps Mix", sku: "DPG-SLPMIX-25", price: 40, cost: 22.00, bags: 25 },
   { id: "slaps-tam", name: "Slaps Tamarind", sku: "DPG-SLPTAM-25", price: 40, cost: 22.00, bags: 25 },
@@ -63,57 +132,83 @@ const PRODUCTS = [
   { id: "bibi-sour", name: "Bibi Licks Sour", sku: "MPG-BIBSOU-12", price: 85, cost: 53.76, bags: 12 },
   { id: "bibi-spcy", name: "Bibi Licks Spicy", sku: "MPG-BIBISPI-12", price: 85, cost: 53.76, bags: 12 },
 ];
-const ZONES = ["Santa Rosa / Sonoma", "Sacramento", "San Jose / Bay Area", "Mendocino / Ukiah", "Oakland / Bay Area", "Other"];
-const TIERS = ["Lista", "Bronce", "Plata", "Oro"];
-const BRANDS = ["Mega PG", "Pigüi USA", "Both", "Neither/Unknown"];
-const STORE_TYPES = ["Dulcería", "Carnicería", "Supermercado", "Tienda/Market", "Convenience", "Other"];
-const INTEREST_LVL = ["Very interested", "Somewhat interested", "Not interested", "Already a client"];
-const SUPPLIERS = ["Pigüi USA (LA)", "Local distributor", "Travels to buy", "Online/Walmart/Amazon", "Unknown", "None (no Slaps)"];
-const PRODUCTS_SEEN = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/Cachetadas", "Cache Colors", "Slim Licks", "Bibi Licks", "Piguileta", "Mega Huevón", "Flamkiyos", "Mordidilla", "Don Cuco", "Other Pigüi", "None"];
-const TIER_DISC = { Lista: 0, Bronce: 0.03125, Plata: 0.0625, Oro: 0.125 };
-const TIER_CLR = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
-const ST_CLR = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
-const LOW = 5;
+
+// ─── Enums de UI ──────────────────────────────────────────────────────────────
+const ZONES: readonly string[] = ["Santa Rosa / Sonoma", "Sacramento", "San Jose / Bay Area", "Mendocino / Ukiah", "Oakland / Bay Area", "Other"];
+const TIERS: readonly Tier[] = ["Lista", "Bronce", "Plata", "Oro"];
+const BRANDS: readonly Brand[] = ["Mega PG", "Pigüi USA", "Both", "Neither/Unknown"];
+const STORE_TYPES: readonly string[] = ["Dulcería", "Carnicería", "Supermercado", "Tienda/Market", "Convenience", "Other"];
+const INTEREST_LVL: readonly string[] = ["Very interested", "Somewhat interested", "Not interested", "Already a client"];
+const SUPPLIERS: readonly string[] = ["Pigüi USA (LA)", "Local distributor", "Travels to buy", "Online/Walmart/Amazon", "Unknown", "None (no Slaps)"];
+const PRODUCTS_SEEN: readonly string[] = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/Cachetadas", "Cache Colors", "Slim Licks", "Bibi Licks", "Piguileta", "Mega Huevón", "Flamkiyos", "Mordidilla", "Don Cuco", "Other Pigüi", "None"];
+
+// ─── Tablas de lookup ─────────────────────────────────────────────────────────
+const TIER_DISC: Record<Tier, number> = { Lista: 0, Bronce: 0.03125, Plata: 0.0625, Oro: 0.125 };
+const TIER_CLR: Record<Tier, string> = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
+const ST_CLR: Record<OrderStatus, string> = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
+
+// ─── Umbrales operativos ──────────────────────────────────────────────────────
+const LOW: number = 5;
 // FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
-const FOLLOWUP_DAYS = 21;
+const FOLLOWUP_DAYS: number = 21;
+
 // REORDER REMINDER SETTINGS
-const REMINDER_COOLDOWN_DAYS = 7;
-const DEFAULT_REORDER_CYCLE = 30;
-const URGENT_OVERDUE_DAYS = 7;
-const ANTICIPATION_DAYS = 5;
+const REMINDER_COOLDOWN_DAYS: number = 7;
+const DEFAULT_REORDER_CYCLE: number = 30;
+const URGENT_OVERDUE_DAYS: number = 7;
+const ANTICIPATION_DAYS: number = 5;
+
 // POST-DELIVERY FOLLOW-UP SETTINGS
-const POSTDEL_MIN_DAYS = 3;    // Earliest: give client time to actually sell product
-const POSTDEL_MAX_DAYS = 21;   // Latest: after this, reorder reminder takes over
-const POSTDEL_URGENT_DAYS = 14; // "Last chance" threshold
+const POSTDEL_MIN_DAYS: number = 3;    // Earliest: give client time to actually sell product
+const POSTDEL_MAX_DAYS: number = 21;   // Latest: after this, reorder reminder takes over
+const POSTDEL_URGENT_DAYS: number = 14; // "Last chance" threshold
+
 // WELCOME NEW CLIENT SETTINGS
-const WELCOME_MAX_DAYS = 14;   // Window after first order to send welcome
+const WELCOME_MAX_DAYS: number = 14;   // Window after first order to send welcome
 
-// === COMMISSIONS — constantes contractuales movidas a src/lib/contract.ts ===
-// (importadas arriba: ACTIVE_ACCOUNT_DAYS, NEW_ACCOUNT_LOOKBACK_DAYS, COMM_RATE_NEW,
-//  COMM_RATE_RESIDUAL, COMM_RATE_PHASE2_BONUS, MILESTONES, MOROSO_DAYS,
-//  POST_TERMINATION_TAIL_MONTHS, REP_FRANCISCO_ID)
+// ─── Constantes contractuales — Comisiones (Deploy A) ────────────────────────
+// Contrato Representante v2 — referencias §X.Y al texto del contrato
+const ACTIVE_ACCOUNT_DAYS: number = 90;        // §1: "Cuenta Activa" = compró en últimos 90 días
+const NEW_ACCOUNT_LOOKBACK_DAYS: number = 365; // §1: "Cuenta Nueva" = sin compras en los 12 meses previos
+const COMM_RATE_NEW: number = 0.07;            // §4.1: 7% sobre primer cobro de Cuenta Nueva
+const COMM_RATE_RESIDUAL: number = 0.05;       // §4.2: 5% sobre cobros subsecuentes
+const MILESTONES: readonly Milestone[] = [     // §4.4: bonos one-time por umbral de Cuentas Activas simultáneas
+  { count: 25, bonus: 500 },
+  { count: 50, bonus: 1000 },
+  { count: 75, bonus: 1500 }
+];
+const REP_FRANCISCO_ID: string = "rep-francisco-carbajal";
 
+// ─── Constantes contractuales — Comisiones (Deploy C) ────────────────────────
+const MOROSO_DAYS: number = 60;                       // §6.2: pedido entregado y >60d sin cobrar = moroso
+const POST_TERMINATION_TAIL_MONTHS: number = 24;      // §10.3: cola de 24 meses tras terminación sin causa justa
+const COMM_RATE_PHASE2_BONUS: number = 0.02;          // §11.4 + §12.1: +2% rev share aditivo durante Fase 2
 
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
-const dSince = (d) => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
-const pF = (id) => PRODUCTS.find(p => p.id === id);
+// ─── Helpers puros ────────────────────────────────────────────────────────────
+const uid = (): string => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const fmt = (n: number | string | null | undefined): string => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+const fmtD = (d: string | number | Date): string => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return String(d); } };
+const dSince = (d: string | number | Date): number => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
+const pF = (id: string): Product | undefined => PRODUCTS.find(p => p.id === id);
+
+// ─── Facade de localStorage ───────────────────────────────────────────────────
+// El tipo del payload es `unknown` por ahora; bloque 2D introducirá un tipo
+// `StoredData` específico cuando todos los dominios estén tipados.
 const S = {
-  load() {
+  load(): unknown {
     try {
       const raw = localStorage.getItem("megapg-data");
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   },
-  save(data) {
+  save(data: unknown): void {
     try { localStorage.setItem("megapg-data", JSON.stringify(data)); } catch(e) { console.error("Save failed:", e); }
   },
 };
 
 // === PUBLIC STORES SYNC (v5.10) — sync clientes a dulcesaborca.com/donde-comprar ===
-const STORE_PHOTOS_BUCKET = "store-photos";
-const PUBLIC_INACTIVE_DAYS = 90;
+const STORE_PHOTOS_BUCKET: string = "store-photos";
+const PUBLIC_INACTIVE_DAYS: number = 90;
 
 const uploadStorePhoto = async (file, clientId) => {
   if (!cloudEnabled || !file) return null;
@@ -512,15 +607,27 @@ const Dashboard = ({ clients, orders, inventory }) => {
   </div>;
 };
 
-const Clients = ({ clients, setClients, orders, representatives, saveAll }) => {
-  const emptyForm = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false, representativeId: "", priorHistoryBeforeRep: false };
-  const [sf, setSf] = useState(false); const [edit, setEdit] = useState(null); const [delC, setDelC] = useState(null); const delRef = useRef(null);
-  const [form, setForm] = useState(emptyForm); const [search, setSearch] = useState("");
-  const [showWebSection, setShowWebSection] = useState(false); const [uploading, setUploading] = useState(false); const [syncMsg, setSyncMsg] = useState(null); const [bulkSyncing, setBulkSyncing] = useState(false);
-  const fileInputRef = useRef(null);
+// Props del componente Clients. Las props de orders/representatives se dejan
+// como any[] hasta que los bloques 2C/2D introduzcan los tipos `Order` y
+// `Representative`. saveAll viene del componente App raíz (la callback `sv`
+// definida con useCallback) y persiste la rebanada de estado al storage.
+interface ClientsProps {
+  clients: Client[];
+  setClients: Dispatch<SetStateAction<Client[]>>;
+  orders: any[];          // Order[] — bloque 2C
+  representatives: any[]; // Representative[] — bloque 2D
+  saveAll: (type: string, data: unknown) => void;
+}
+
+const Clients = ({ clients, setClients, orders, representatives, saveAll }: ClientsProps) => {
+  const emptyForm: ClientFormState = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false, representativeId: "", priorHistoryBeforeRep: false };
+  const [sf, setSf] = useState<boolean>(false); const [edit, setEdit] = useState<string | null>(null); const [delC, setDelC] = useState<string | null>(null); const delRef = useRef<string | null>(null);
+  const [form, setForm] = useState<ClientFormState>(emptyForm); const [search, setSearch] = useState<string>("");
+  const [showWebSection, setShowWebSection] = useState<boolean>(false); const [uploading, setUploading] = useState<boolean>(false); const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null); const [bulkSyncing, setBulkSyncing] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const openN = () => { setForm(emptyForm); setEdit(null); setShowWebSection(false); setSf(true); };
-  const openE = (c) => { setForm({ ...emptyForm, ...c }); setEdit(c.id); setShowWebSection(!!c.showOnWebsite); setSf(true); };
+  const openE = (c: Client) => { setForm({ ...emptyForm, ...c }); setEdit(c.id); setShowWebSection(!!c.showOnWebsite); setSf(true); };
 
   const save = async () => {
     if (!form.name) return;
@@ -549,7 +656,7 @@ const Clients = ({ clients, setClients, orders, representatives, saveAll }) => {
     setSf(false); setSyncMsg(null);
   };
 
-  const del = (id) => {
+  const del = (id: string) => {
     if (delRef.current === id) {
       const c = clients.find(x => x.id === id);
       if (c?.showOnWebsite) syncClientToPublicStores({ ...c, showOnWebsite: false }, orders);
@@ -561,7 +668,7 @@ const Clients = ({ clients, setClients, orders, representatives, saveAll }) => {
     }
   };
 
-  const handlePhotoUpload = async (e) => {
+  const handlePhotoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
     if (file.size > 5 * 1024 * 1024) { setSyncMsg({ ok: false, text: "⚠️ Foto muy grande (máx 5MB)" }); return; }
     setUploading(true); setSyncMsg(null);
