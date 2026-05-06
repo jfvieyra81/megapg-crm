@@ -1,6 +1,31 @@
+// @ts-nocheck
+// TODO refactor v5.19+ — quitar este pragma cuando todo App.tsx esté tipado en bloques.
+//
+// Bloques tipados a la fecha (extraídos a archivos .ts):
+//   - src/lib/contract.ts  (constantes contractuales del Representante v2)
+//
+// Pendiente (futuras sesiones):
+//   - tipos de domain: Client, Order, Visit, Representative, Commission, Visit, etc.
+//   - tipado de hooks (useState<T>, props de componentes)
+//   - eliminar implicit any restantes
+//
+// Mientras este pragma exista, TypeScript NO valida este archivo, pero todos
+// los .ts importados (incluyendo contract.ts) sí se validan en strict mode.
+
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { jsPDF } from "jspdf";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
+import {
+  ACTIVE_ACCOUNT_DAYS,
+  NEW_ACCOUNT_LOOKBACK_DAYS,
+  COMM_RATE_NEW,
+  COMM_RATE_RESIDUAL,
+  COMM_RATE_PHASE2_BONUS,
+  MILESTONES,
+  MOROSO_DAYS,
+  POST_TERMINATION_TAIL_MONTHS,
+  REP_FRANCISCO_ID,
+} from "./lib/contract";
 
 const SUPA_URL = SUPABASE_URL && SUPABASE_URL !== "YOUR_PROJECT_URL_HERE" ? SUPABASE_URL : null;
 const SUPA_KEY = SUPABASE_KEY && SUPABASE_KEY !== "YOUR_ANON_KEY_HERE" ? SUPABASE_KEY : null;
@@ -63,22 +88,11 @@ const POSTDEL_URGENT_DAYS = 14; // "Last chance" threshold
 // WELCOME NEW CLIENT SETTINGS
 const WELCOME_MAX_DAYS = 14;   // Window after first order to send welcome
 
-// === COMMISSIONS (Deploy A) — Contrato Representante v2 ===
-const ACTIVE_ACCOUNT_DAYS = 90;        // §1: "Cuenta Activa" = compró en últimos 90 días
-const NEW_ACCOUNT_LOOKBACK_DAYS = 365; // §1: "Cuenta Nueva" = sin compras en los 12 meses previos
-const COMM_RATE_NEW = 0.07;            // §4.1: 7% sobre primer cobro de Cuenta Nueva
-const COMM_RATE_RESIDUAL = 0.05;       // §4.2: 5% sobre cobros subsecuentes
-const MILESTONES = [                    // §4.4: bonos one-time por umbral de Cuentas Activas simultáneas
-  { count: 25, bonus: 500 },
-  { count: 50, bonus: 1000 },
-  { count: 75, bonus: 1500 }
-];
-const REP_FRANCISCO_ID = "rep-francisco-carbajal";
+// === COMMISSIONS — constantes contractuales movidas a src/lib/contract.ts ===
+// (importadas arriba: ACTIVE_ACCOUNT_DAYS, NEW_ACCOUNT_LOOKBACK_DAYS, COMM_RATE_NEW,
+//  COMM_RATE_RESIDUAL, COMM_RATE_PHASE2_BONUS, MILESTONES, MOROSO_DAYS,
+//  POST_TERMINATION_TAIL_MONTHS, REP_FRANCISCO_ID)
 
-// === COMMISSIONS (Deploy C) — Ajustes y Fase 2 ===
-const MOROSO_DAYS = 60;                       // §6.2: pedido entregado y >60d sin cobrar = moroso
-const POST_TERMINATION_TAIL_MONTHS = 24;      // §10.3: cola de 24 meses tras terminación sin causa justa
-const COMM_RATE_PHASE2_BONUS = 0.02;          // §11.4 + §12.1: +2% rev share aditivo durante Fase 2
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
