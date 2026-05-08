@@ -15,6 +15,17 @@ import { useState, useCallback, useRef, useEffect, useMemo, type Dispatch, type 
 import { jsPDF } from "jspdf";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
 
+import {
+  isActiveAccount,
+  milestonesEarnedAt,
+  monthLabel,
+  monthBounds,
+  isInMonth,
+  isPhase2ActiveAt,
+  effectiveCommissionRate,
+  getMorososForRep,
+} from "./lib/business/commissions";
+import { Representatives } from "./components/Representatives";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
 export type OrderStatus = "pending" | "delivered" | "paid";
@@ -246,111 +257,7 @@ const lastOrderDate = (clientId, orders) => {
 };
 
 // === COMMISSION HELPERS (Deploy A) ===
-// Cuenta Activa: cliente con al menos un pedido cobrado en los últimos N días, relativo a refDate.
-const isActiveAccount = (clientId, orders, refDate = new Date()) => {
-  const ref = new Date(refDate).getTime();
-  return orders.some(o => {
-    if (o.clientId !== clientId || o.status !== "paid" || !o.paidDate) return false;
-    const paid = new Date(o.paidDate).getTime();
-    const diffDays = (ref - paid) / 86400000;
-    return diffDays >= 0 && diffDays <= ACTIVE_ACCOUNT_DAYS;
-  });
-};
-
-// Cuenta Nueva al momento del cobro: el cliente NO tenía pedidos cobrados en los 365 días previos
-// al paidDate del pedido en cuestión. Si tiene priorHistoryBeforeRep=true y representativeId, NO es nueva.
-const wasNewAccountAt = (client, paidOrder, allOrders) => {
-  if (!paidOrder?.paidDate) return false;
-  // Si el cliente tenía historia previa antes de ser asignado, nunca cuenta como Nueva para el rep.
-  if (client?.representativeId && client?.priorHistoryBeforeRep) return false;
-  const cutoff = new Date(paidOrder.paidDate).getTime() - NEW_ACCOUNT_LOOKBACK_DAYS * 86400000;
-  return !allOrders.some(o => {
-    if (o.id === paidOrder.id) return false;
-    if (o.clientId !== paidOrder.clientId) return false;
-    if (o.status !== "paid" || !o.paidDate) return false;
-    return new Date(o.paidDate).getTime() >= cutoff && new Date(o.paidDate).getTime() < new Date(paidOrder.paidDate).getTime();
-  });
-};
-
-// Cuenta Activas simultáneas asignadas a un rep, a una fecha dada. Para detectar milestones.
-const activeAccountsForRep = (representativeId, clients, orders, refDate = new Date()) => {
-  return clients.filter(c => c.representativeId === representativeId && isActiveAccount(c.id, orders, refDate)).length;
-};
-
-// Compute milestones earned by reaching peakActive — returns total $ earned and which thresholds were hit.
-const milestonesEarnedAt = (peakActive) => MILESTONES.filter(m => peakActive >= m.count);
-
-const monthLabel = (yyyymm) => {
-  const [y, m] = yyyymm.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("es-MX", { month: "long", year: "numeric" });
-};
-const monthBounds = (yyyymm) => {
-  const [y, m] = yyyymm.split("-").map(Number);
-  const start = new Date(y, m - 1, 1, 0, 0, 0);
-  const end = new Date(y, m, 1, 0, 0, 0);
-  return { start, end };
-};
-const isInMonth = (dateISO, yyyymm) => {
-  if (!dateISO) return false;
-  const { start, end } = monthBounds(yyyymm);
-  const d = new Date(dateISO).getTime();
-  return d >= start.getTime() && d < end.getTime();
-};
-
-// === DEPLOY C HELPERS ===
-
-// Phase 2 active for a rep at a given date: rep.phase2Active && date >= phase2StartDate
-const isPhase2ActiveAt = (rep, atISO) => {
-  if (!rep?.phase2Active || !rep?.phase2StartDate || !atISO) return false;
-  return new Date(atISO).getTime() >= new Date(rep.phase2StartDate).getTime();
-};
-
-// Determine if a paid order falls inside the post-termination tail window (§10.3).
-// Returns: { inTail, afterTail, withinContract }
-const terminationStatus = (rep, paidDateISO) => {
-  if (!rep?.terminatedDate || !paidDateISO) return { inTail: false, afterTail: false, withinContract: true };
-  const paid = new Date(paidDateISO).getTime();
-  const term = new Date(rep.terminatedDate).getTime();
-  if (paid <= term) return { inTail: false, afterTail: false, withinContract: true };
-  const tailEnd = new Date(rep.terminatedDate);
-  tailEnd.setMonth(tailEnd.getMonth() + POST_TERMINATION_TAIL_MONTHS);
-  if (paid <= tailEnd.getTime()) return { inTail: true, afterTail: false, withinContract: false };
-  return { inTail: false, afterTail: true, withinContract: false };
-};
-
-// Compute the effective commission rate for a single paid order, considering all rules.
-// Returns: { rate, classification, phase2Applied, tailApplied, terminated }
-const effectiveCommissionRate = (rep, client, paidOrder, allOrders) => {
-  const { inTail, afterTail } = terminationStatus(rep, paidOrder.paidDate);
-
-  // §10.3: outside the 24-month tail = no commission
-  if (afterTail) return { rate: 0, classification: "Fuera de plazo (>24m)", phase2Applied: false, tailApplied: false, terminated: true };
-
-  // §10.3: inside tail = residual flat 5%, no Phase 2, no new account bonus
-  if (inTail) return { rate: COMM_RATE_RESIDUAL, classification: "Residual (cola post-salida)", phase2Applied: false, tailApplied: true, terminated: true };
-
-  // Normal contract period
-  const isNew = wasNewAccountAt(client, paidOrder, allOrders);
-  const baseRate = isNew ? COMM_RATE_NEW : COMM_RATE_RESIDUAL;
-  const phase2 = isPhase2ActiveAt(rep, paidOrder.paidDate);
-  const finalRate = phase2 ? baseRate + COMM_RATE_PHASE2_BONUS : baseRate;
-  const cls = isNew ? "Nueva" : "Residual";
-  return { rate: finalRate, classification: phase2 ? `${cls} + Fase 2` : cls, phase2Applied: phase2, tailApplied: false, terminated: false };
-};
-
-// Get morosos (delivered but unpaid for >60 days) for a rep's clients.
-const getMorososForRep = (repId, clients, orders) => {
-  const repClientIds = new Set(clients.filter(c => c.representativeId === repId).map(c => c.id));
-  return orders.filter(o => {
-    if (!repClientIds.has(o.clientId)) return false;
-    if (o.status !== "delivered") return false;
-    return dSince(o.date) > MOROSO_DAYS;
-  }).map(o => ({
-    order: o,
-    client: clients.find(c => c.id === o.clientId),
-    daysOverdue: dSince(o.date) - MOROSO_DAYS
-  })).sort((a, b) => b.daysOverdue - a.daysOverdue);
-};
+// Helpers de comisiones extraídos a src/lib/business/commissions.ts (Sesión 2 bloque 3)
 
 const syncClientToPublicStores = async (client, orders) => {
   if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
@@ -1895,115 +1802,7 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
 // ============================================================
 // REPRESENTATIVES (Deploy A) — CRUD + estadísticas básicas
 // ============================================================
-const Representatives = ({ representatives, setRepresentatives, clients, orders, saveAll }) => {
-  const emptyForm = { name: "", phone: "", email: "", contractDate: "", phase2Active: false, phase2StartDate: "", milestonesPaid: [], terminatedDate: "", notes: "" };
-  const [sf, setSf] = useState(false);
-  const [edit, setEdit] = useState(null);
-  const [form, setForm] = useState(emptyForm);
-  const [delConfirm, setDelConfirm] = useState(null);
-
-  const openN = () => { setForm(emptyForm); setEdit(null); setSf(true); };
-  const openE = (r) => { setForm({ ...emptyForm, ...r, milestonesPaid: r.milestonesPaid || [] }); setEdit(r.id); setSf(true); };
-
-  const save = () => {
-    if (!form.name) return;
-    if (edit) {
-      setRepresentatives(prev => { const n = prev.map(r => r.id === edit ? { ...r, ...form } : r); saveAll("representatives", n); return n; });
-    } else {
-      const newRep = { ...form, id: uid(), created: new Date().toISOString() };
-      setRepresentatives(prev => { const n = [...prev, newRep]; saveAll("representatives", n); return n; });
-    }
-    setSf(false);
-  };
-
-  const del = (id) => {
-    if (delConfirm === id) {
-      setRepresentatives(prev => { const n = prev.filter(r => r.id !== id); saveAll("representatives", n); return n; });
-      setDelConfirm(null);
-    } else {
-      setDelConfirm(id);
-      setTimeout(() => setDelConfirm(null), 3000);
-    }
-  };
-
-  // Resumen total de comisiones cobradas (suma de commissions.amount donde paid=true)
-  const totalPaidForRep = (repId) => {
-    // Lee de localStorage directamente — viene de stateRef en App
-    try {
-      const data = JSON.parse(localStorage.getItem("dulcesabor-crm") || "{}");
-      return (data.commissions || []).filter(c => c.representativeId === repId && c.status === "paid").reduce((s, c) => s + (c.totalAmount || 0), 0);
-    } catch { return 0; }
-  };
-
-  return <div>
-    <div style={{ background: "#F4ECF7", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #6C3483" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#6C3483", marginBottom: 4 }}>🧑‍💼 Representantes</div>
-      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Gestiona contratos de representantes de venta. Cada cliente puede tener un representante asignado en su ficha. Las comisiones se calculan en el tab "Comisiones".</div>
-    </div>
-    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={openN}>+ Nuevo representante</Btn></div>
-    {representatives.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No hay representantes. Clic "+ Nuevo representante".</p>}
-    {representatives.map(r => {
-      const assigned = clients.filter(c => c.representativeId === r.id);
-      const active = assigned.filter(c => isActiveAccount(c.id, orders)).length;
-      const paidTotal = totalPaidForRep(r.id);
-      return <div key={r.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: "4px solid #6C3483", borderRadius: 8, padding: "12px 14px", marginBottom: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>{r.name} {r.phase2Active && <Badge text="Fase 2" color="#1B7340" />} {r.terminatedDate && <Badge text="Terminado" color="#888" />}</div>
-            <div style={{ fontSize: 12, color: "#777", marginTop: 3 }}>{[r.phone, r.email].filter(Boolean).join(" • ") || "Sin contacto"}</div>
-            <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>
-              <b>{assigned.length}</b> cuenta{assigned.length !== 1 ? "s" : ""} asignada{assigned.length !== 1 ? "s" : ""} • <b>{active}</b> activa{active !== 1 ? "s" : ""} (90d) • <b>{fmt(paidTotal)}</b> cobrado total
-            </div>
-            {r.contractDate && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Contrato: {fmtD(r.contractDate)}{r.phase2Active && r.phase2StartDate ? ` • Fase 2 desde ${fmtD(r.phase2StartDate)}` : ""}</div>}
-            {(r.milestonesPaid || []).length > 0 && <div style={{ fontSize: 11, color: "#1B7340", marginTop: 2 }}>Milestones cobrados: {r.milestonesPaid.join(", ")}</div>}
-          </div>
-          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <Btn small onClick={() => openE(r)}>Edit</Btn>
-            <Btn small danger onClick={() => del(r.id)} style={delConfirm === r.id ? { background: "#8B0000" } : {}}>{delConfirm === r.id ? "Sure?" : "✕"}</Btn>
-          </div>
-        </div>
-      </div>;
-    })}
-
-    {sf && <Modal title={edit ? "Editar representante" : "Nuevo representante"} onClose={() => setSf(false)}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
-        <Inp label="Nombre *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Francisco Carbajal" />
-        <Inp label="Teléfono" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(707) 555-1234" />
-        <Inp label="Email" value={form.email} onChange={v => setForm(p => ({ ...p, email: v }))} placeholder="rep@ejemplo.com" />
-        <Inp label="Fecha de contrato" type="date" value={form.contractDate} onChange={v => setForm(p => ({ ...p, contractDate: v }))} />
-      </div>
-      <div style={{ marginTop: 10, padding: "10px 14px", background: "#f4faf4", border: "1px solid #d4ebd4", borderRadius: 8 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#1B7340" }}>
-          <input type="checkbox" checked={!!form.phase2Active} onChange={e => setForm(p => ({ ...p, phase2Active: e.target.checked, phase2StartDate: e.target.checked && !p.phase2StartDate ? new Date().toISOString().slice(0, 10) : p.phase2StartDate }))} style={{ width: 18, height: 18 }} />
-          Fase 2 activa (rev share +2% adicional)
-        </label>
-        {form.phase2Active && <div style={{ marginTop: 8 }}>
-          <Inp label="Inicio Fase 2" type="date" value={form.phase2StartDate} onChange={v => setForm(p => ({ ...p, phase2StartDate: v }))} />
-        </div>}
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Milestones cobrados (§4.4)</label>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {MILESTONES.map(m => {
-            const paid = (form.milestonesPaid || []).includes(m.count);
-            return <label key={m.count} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", border: `1px solid ${paid ? "#1B7340" : "#ddd"}`, borderRadius: 6, background: paid ? "#E8F5E9" : "#fff", cursor: "pointer", fontSize: 12 }}>
-              <input type="checkbox" checked={paid} onChange={e => setForm(p => ({ ...p, milestonesPaid: e.target.checked ? [...(p.milestonesPaid || []), m.count] : (p.milestonesPaid || []).filter(x => x !== m.count) }))} />
-              {m.count} cuentas → {fmt(m.bonus)}
-            </label>;
-          })}
-        </div>
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <Inp label="Fecha de terminación (si aplica)" type="date" value={form.terminatedDate} onChange={v => setForm(p => ({ ...p, terminatedDate: v }))} />
-      </div>
-      <Inp label="Notas" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-        <Btn onClick={() => setSf(false)}>Cancel</Btn>
-        <Btn primary onClick={save}>{edit ? "Update" : "Add"}</Btn>
-      </div>
-    </Modal>}
-  </div>;
-};
+// Representatives extraído a src/components/Representatives.tsx (Sesión 2 bloque 4)
 
 // ============================================================
 // COMMISSIONS (Deploy B) — Cálculo mensual, tabla, CSV, freeze
