@@ -7,7 +7,7 @@
 // Extraído de App.jsx en Sesión 2 bloque 4 del refactor.
 
 import { useState } from "react";
-import type { Client, Order, Representative } from "../types/domain";
+import type { Client, Commission, Order, Representative } from "../types/domain";
 import { MILESTONES } from "../lib/contract";
 import { isActiveAccount } from "../lib/business/commissions";
 import { fmt, fmtD, uid } from "../lib/format";
@@ -18,6 +18,7 @@ interface RepresentativesProps {
   setRepresentatives: React.Dispatch<React.SetStateAction<Representative[]>>;
   clients: Client[];
   orders: Order[];
+  commissions: Commission[];
   /** Persistencia genérica del CRM (`sv` en App.tsx). */
   saveAll: (type: string, data: unknown) => void;
 }
@@ -42,6 +43,7 @@ export const Representatives = ({
   setRepresentatives,
   clients,
   orders,
+  commissions,
   saveAll,
 }: RepresentativesProps) => {
   const [sf, setSf] = useState(false);
@@ -97,22 +99,20 @@ export const Representatives = ({
     }
   };
 
-  // Resumen total de comisiones cobradas para un rep.
-  // FIXME (bug pre-existente, pendiente fix separado): lee de
-  // localStorage("dulcesabor-crm") pero el resto de la app guarda en
-  // localStorage("megapg-data"). Esto hace que `paidTotal` siempre devuelva 0.
-  // El fix correcto es pasar `commissions` como prop y filtrar desde ahí.
-  const totalPaidForRep = (repId: string): number => {
-    try {
-      const raw = localStorage.getItem("dulcesabor-crm") || "{}";
-      const data = JSON.parse(raw) as { commissions?: Array<{ representativeId: string; status: string; totalAmount?: number }> };
-      return (data.commissions || [])
-        .filter(c => c.representativeId === repId && c.status === "paid")
-        .reduce((s, c) => s + (c.totalAmount || 0), 0);
-    } catch {
-      return 0;
-    }
-  };
+  // Total de comisiones cobradas para un rep.
+  //
+  // Derivación pura sobre la prop `commissions`. Antes leía
+  // `localStorage("dulcesabor-crm")` directamente, que era un bug doble:
+  //   1) la app guarda en `"megapg-data"`, no en `"dulcesabor-crm"`,
+  //      así que `paidTotal` siempre era 0 ("$0.00 cobrado total");
+  //   2) un componente no debe leer la capa de persistencia por su
+  //      cuenta — eso rompería el paso 6 del refactor (Supabase
+  //      primario, localStorage como cache offline).
+  // Ahora el componente es data-driven vía props y testeable.
+  const totalPaidForRep = (repId: string): number =>
+    commissions
+      .filter(c => c.representativeId === repId && c.status === "paid")
+      .reduce((s, c) => s + (c.totalAmount || 0), 0);
 
   return (
     <div>
