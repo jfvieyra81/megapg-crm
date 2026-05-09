@@ -25,6 +25,18 @@ import {
   effectiveCommissionRate,
   getMorososForRep,
 } from "./lib/business/commissions";
+import {
+  ACTIVE_ACCOUNT_DAYS,
+  NEW_ACCOUNT_LOOKBACK_DAYS,
+  COMM_RATE_NEW,
+  COMM_RATE_RESIDUAL,
+  COMM_RATE_PHASE2_BONUS,
+  MILESTONES,
+  MOROSO_DAYS,
+  POST_TERMINATION_TAIL_MONTHS,
+  REP_FRANCISCO_ID,
+  type Milestone,
+} from "./lib/contract";
 import { Representatives } from "./components/Representatives";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
@@ -38,11 +50,6 @@ export type Product = {
   readonly price: number;
   readonly cost: number;
   readonly bags: number;
-};
-
-export type Milestone = {
-  readonly count: number;
-  readonly bonus: number;
 };
 
 // ─── Bloque 2B: Client ────────────────────────────────────────────────────────
@@ -176,24 +183,6 @@ const POSTDEL_URGENT_DAYS: number = 14; // "Last chance" threshold
 
 // WELCOME NEW CLIENT SETTINGS
 const WELCOME_MAX_DAYS: number = 14;   // Window after first order to send welcome
-
-// ─── Constantes contractuales — Comisiones (Deploy A) ────────────────────────
-// Contrato Representante v2 — referencias §X.Y al texto del contrato
-const ACTIVE_ACCOUNT_DAYS: number = 90;        // §1: "Cuenta Activa" = compró en últimos 90 días
-const NEW_ACCOUNT_LOOKBACK_DAYS: number = 365; // §1: "Cuenta Nueva" = sin compras en los 12 meses previos
-const COMM_RATE_NEW: number = 0.07;            // §4.1: 7% sobre primer cobro de Cuenta Nueva
-const COMM_RATE_RESIDUAL: number = 0.05;       // §4.2: 5% sobre cobros subsecuentes
-const MILESTONES: readonly Milestone[] = [     // §4.4: bonos one-time por umbral de Cuentas Activas simultáneas
-  { count: 25, bonus: 500 },
-  { count: 50, bonus: 1000 },
-  { count: 75, bonus: 1500 }
-];
-const REP_FRANCISCO_ID: string = "rep-francisco-carbajal";
-
-// ─── Constantes contractuales — Comisiones (Deploy C) ────────────────────────
-const MOROSO_DAYS: number = 60;                       // §6.2: pedido entregado y >60d sin cobrar = moroso
-const POST_TERMINATION_TAIL_MONTHS: number = 24;      // §10.3: cola de 24 meses tras terminación sin causa justa
-const COMM_RATE_PHASE2_BONUS: number = 0.02;          // §11.4 + §12.1: +2% rev share aditivo durante Fase 2
 
 // ─── Helpers puros ────────────────────────────────────────────────────────────
 const uid = (): string => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -2616,7 +2605,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: 46, width: "auto", flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.18</span>
+        <span style={{ fontSize: 13, color: "#888" }}>CRM v5.21.2</span>
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {currentUser && <button onClick={handleLogout} title="Cerrar sesión" style={{ fontSize: 10, color: "#888", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Logout</button>}
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
