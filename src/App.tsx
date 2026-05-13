@@ -350,10 +350,10 @@ const authedHeaders = () => {
 const authSendMagicLink = async (email) => {
   if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
   try {
-    const r = await fetch(`${SUPA_URL}/auth/v1/otp`, {
+    const r = await fetch(`${SUPA_URL}/auth/v1/otp?redirect_to=${encodeURIComponent(window.location.origin)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "apikey": SUPA_KEY },
-      body: JSON.stringify({ email, options: { email_redirect_to: window.location.origin } })
+      body: JSON.stringify({ email })
     });
     if (!r.ok) {
       const txt = await r.text();
