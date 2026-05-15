@@ -10,7 +10,6 @@
 // bloques siguientes. Cuando los 4 bloques estén completos, se quita este
 // pragma y el archivo entra a strict mode.
 // ─────────────────────────────────────────────────────────────────────────────
-
 import { useState, useCallback, useRef, useEffect, useMemo, type Dispatch, type SetStateAction, type ChangeEvent } from "react";
 import { jsPDF } from "jspdf";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config";
@@ -38,7 +37,7 @@ import {
   type Milestone,
 } from "./lib/contract";
 import { Representatives } from "./components/Representatives";
-import { Commissions } from "./components/Commissions";
+import Commissions from "./components/Commissions";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
 export type OrderStatus = "pending" | "delivered" | "paid";
@@ -353,7 +352,7 @@ const authSendMagicLink = async (email) => {
     const r = await fetch(`${SUPA_URL}/auth/v1/otp?redirect_to=${encodeURIComponent(window.location.origin)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "apikey": SUPA_KEY },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, options: { email_redirect_to: window.location.origin } })
     });
     if (!r.ok) {
       const txt = await r.text();
@@ -1795,13 +1794,7 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
 // Representatives extraído a src/components/Representatives.tsx (Sesión 2 bloque 4)
 
 // ============================================================
-// COMMISSIONS (Deploy B) — Cálculo mensual, tabla, CSV, freeze
-// ============================================================
-// Commissions extraído a src/components/Commissions.tsx (Sesión 2 bloque 4.b)
 
-// ============================================================
-// LOGIN SCREEN (Deploy D2) — Magic link + access denied
-// ============================================================
 const LoginScreen = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState("");
   const [step, setStep] = useState("idle"); // idle | sending | sent | error

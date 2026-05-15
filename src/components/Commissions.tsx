@@ -1,52 +1,70 @@
 // @ts-nocheck
-// ─────────────────────────────────────────────────────────────────────────────
-// Commissions — extraído de App.tsx en el bloque 4.b (cero cambio de comportamiento).
-// Pendiente de tipar: bloque 2D (Visit / Representative / Commission). Hasta
-// entonces este archivo conserva @ts-nocheck igual que App.tsx.
+// src/components/Commissions.tsx
 //
-// Duplicaciones temporales (a consolidar en bloques posteriores):
-//   • Card: definido localmente. Cuando ui.tsx incorpore Card, reemplazar por
-//     `import { Card } from "./ui";` y borrar la copia local.
-//   • uid, fmt, fmtD: helpers de formato locales. Cuando lib/format.ts entre
-//     al repo, reemplazar por `import { uid, fmt, fmtD } from "../lib/format";`.
+// Módulo de comisiones mensuales — Deploy B.
+// Cálculo en vivo, tabla detallada, CSV export (§5.4), freeze/unfreeze.
 //
-// Origen: App.tsx líneas 1799–2161 (commit d0f9f2d, v5.21.2).
-// ─────────────────────────────────────────────────────────────────────────────
+// Extraído de App.tsx en Block 4.b del refactor.
+// Cero cambio de comportamiento — sólo reorganización.
 
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 
-import {
-  isActiveAccount,
-  milestonesEarnedAt,
-  monthLabel,
-  monthBounds,
-  isInMonth,
-  isPhase2ActiveAt,
-  effectiveCommissionRate,
-  getMorososForRep,
-} from "../lib/business/commissions";
+// Constantes contractuales (ya extraídas en Block 2.1.b)
 import {
   COMM_RATE_NEW,
   COMM_RATE_RESIDUAL,
   COMM_RATE_PHASE2_BONUS,
   MILESTONES,
-  MOROSO_DAYS,
   POST_TERMINATION_TAIL_MONTHS,
+  MOROSO_DAYS,
 } from "../lib/contract";
-import { Btn, Modal, Badge } from "./ui";
 
-// ── Helpers de formato locales (FIXME: migrar a lib/format.ts) ──
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const fmt = (n) => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-const fmtD = (d) => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
+// Lógica de negocio pura (ya extraída en Block 2.3)
+import {
+  effectiveCommissionRate,
+  isInMonth,
+  monthBounds,
+  monthLabel,
+  isActiveAccount,
+  milestonesEarnedAt,
+  getMorososForRep,
+  isPhase2ActiveAt,
+} from "../lib/business/commissions";
 
-// ── Card local (FIXME: migrar a ui.tsx) ──
-const Card = ({ title, value, sub, color }) => <div style={{ background: "#f8f8f8", borderRadius: 8, padding: "12px 14px", borderLeft: `4px solid ${color || "#1B7340"}`, minWidth: 0 }}><div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>{title}</div><div style={{ fontSize: 20, fontWeight: 700, color: color || "#1B7340" }}>{value}</div>{sub && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{sub}</div>}</div>;
+// Tipos de dominio
+import type { Client, Order, Representative, Commission } from "../types/domain";
+
+// Utilidades de formato compartidas
+import { fmt, fmtD, uid } from "../lib/format";
+
+// Componentes UI compartidos
+import { Badge, Btn, Modal, Card } from "./ui";
 
 // ============================================================
-// COMMISSIONS (Deploy B) — Cálculo mensual, tabla, CSV, freeze
+// Props
 // ============================================================
-export const Commissions = ({ representatives, clients, orders, commissions, setCommissions, saveAll }) => {
+
+interface CommissionsProps {
+  representatives: Representative[];
+  clients: Client[];
+  orders: Order[];
+  commissions: Commission[];
+  setCommissions: (commissions: Commission[]) => void;
+  saveAll: (type: string, data: unknown) => void;
+}
+
+// ============================================================
+// Componente principal
+// ============================================================
+
+const Commissions: React.FC<CommissionsProps> = ({
+  representatives,
+  clients,
+  orders,
+  commissions,
+  setCommissions,
+  saveAll,
+}) => {
   const today = new Date();
   const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
   const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
@@ -90,7 +108,6 @@ export const Commissions = ({ representatives, clients, orders, commissions, set
     });
 
     // === Devoluciones / refunds dentro del mes (§6.1) ===
-    // Buscamos en TODOS los pedidos del rep cuyo returnedDate caiga en el mes seleccionado.
     const returnsThisMonth = orders.filter(o =>
       repClientIds.has(o.clientId) &&
       o.returnedAmount > 0 &&
@@ -99,17 +116,16 @@ export const Commissions = ({ representatives, clients, orders, commissions, set
     );
     const returnLines = returnsThisMonth.map(o => {
       const client = clients.find(c => c.id === o.clientId);
-      // Reaplica las mismas reglas que el pedido original (a su paidDate) para saber qué tasa se cobró.
       const calc = effectiveCommissionRate(rep, client, o, orders);
       const netRefund = -1 * (o.returnedAmount || 0);
-      const commissionReverse = netRefund * calc.rate; // negativa
+      const commissionReverse = netRefund * calc.rate;
       return {
         kind: "return",
         orderId: o.id,
         clientId: o.clientId,
         clientName: client?.name || "?",
         orderDate: o.date,
-        paidDate: o.returnedDate, // mostramos la fecha del refund para claridad
+        paidDate: o.returnedDate,
         netSale: netRefund,
         classification: `↩ Refund (${calc.classification})`,
         rate: calc.rate,
@@ -124,9 +140,9 @@ export const Commissions = ({ representatives, clients, orders, commissions, set
     // === Subtotales ===
     const newCommission = lines.filter(l => l.classification.startsWith("Nueva")).reduce((s, l) => s + l.commission, 0);
     const residualCommission = lines.filter(l => l.classification.startsWith("Residual")).reduce((s, l) => s + l.commission, 0);
-    const refundCommission = returnLines.reduce((s, l) => s + l.commission, 0); // negativa
+    const refundCommission = returnLines.reduce((s, l) => s + l.commission, 0);
     const tailCommission = lines.filter(l => l.tailApplied).reduce((s, l) => s + l.commission, 0);
-    const phase2Bonus = lines.filter(l => l.phase2Applied).reduce((s, l) => s + l.netSale * COMM_RATE_PHASE2_BONUS, 0); // sólo el delta del +2%
+    const phase2Bonus = lines.filter(l => l.phase2Applied).reduce((s, l) => s + l.netSale * COMM_RATE_PHASE2_BONUS, 0);
     const totalNetSales = positiveLines.reduce((s, l) => s + l.netSale, 0);
     const totalRefunds = Math.abs(returnsThisMonth.reduce((s, o) => s + (o.returnedAmount || 0), 0));
 
@@ -212,10 +228,8 @@ export const Commissions = ({ representatives, clients, orders, commissions, set
     // Marcar milestones como pagados en el rep
     if (liveCalc.newMilestones.length > 0) {
       const newPaid = [...(rep.milestonesPaid || []), ...liveCalc.newMilestones.map(m => m.count)];
-      // Actualizamos representatives via saveAll (caller mantiene el state)
       const updatedReps = representatives.map(r => r.id === rep.id ? { ...r, milestonesPaid: newPaid } : r);
       saveAll("representatives", updatedReps);
-      // No tenemos setRepresentatives aquí, pero saveAll ya persiste; el siguiente render lo verá vía props refresh.
       // Para forzar refresh inmediato emitimos evento custom:
       window.dispatchEvent(new CustomEvent("ds-reps-updated", { detail: updatedReps }));
     }
@@ -267,7 +281,7 @@ export const Commissions = ({ representatives, clients, orders, commissions, set
 
   // Genera lista de meses (últimos 12)
   const monthOptions = useMemo(() => {
-    const arr = [];
+    const arr: string[] = [];
     const d = new Date();
     for (let i = 0; i < 12; i++) {
       const yyyymm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -409,3 +423,5 @@ export const Commissions = ({ representatives, clients, orders, commissions, set
     </Modal>}
   </div>;
 };
+
+export default Commissions;

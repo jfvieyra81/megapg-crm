@@ -1,31 +1,26 @@
 // src/lib/format.ts
 //
-// Helpers de formato compartidos: moneda, fecha, IDs únicos.
-// Funciones puras — testeables en aislamiento.
-//
-// Extraído de App.jsx en Sesión 2 bloque 4 del refactor.
+// Utilidades de formato compartidas entre componentes.
+// Extraídas de App.tsx en Block 4.b del refactor.
 
-/** Genera un ID único (timestamp en base 36 + random). Para client-side
- *  donde no necesitamos garantía criptográfica. */
+/** Genera un ID corto tipo base-36 (timestamp + random). */
 export const uid = (): string =>
   Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-/** Formato moneda en USD: 1234.5 → "$1,234.50". Tolerante a inputs no
- *  numéricos (los trata como 0). */
+/** Formatea un número como moneda USD ($1,234.56). Null-safe → "$0.00". */
 export const fmt = (n: number | null | undefined): string =>
   "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
-/** Formato de fecha legible en inglés US: "2026-05-06" → "May 6, 2026".
- *  Robusto a inputs inválidos (devuelve el input original). */
-export const fmtD = (d: string | Date | null | undefined): string => {
-  if (!d) return "";
+/** Formatea una fecha ISO como "May 6, 2026". Null-safe → devuelve el input. */
+export const fmtD = (d: string | null | undefined): string => {
   try {
+    if (!d) return d as string;
     return new Date(d).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     });
   } catch {
-    return String(d);
+    return d as string;
   }
 };
