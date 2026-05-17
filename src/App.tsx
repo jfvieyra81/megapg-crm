@@ -38,6 +38,7 @@ import {
 } from "./lib/contract";
 import { Representatives } from "./components/Representatives";
 import Commissions from "./components/Commissions";
+import Welcomes from "./components/Welcomes";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
 export type OrderStatus = "pending" | "delivered" | "paid";
@@ -1297,85 +1298,6 @@ const PostDelivery = ({ clients, orders, followups, setFollowups, saveAll }) => 
   </div>;
 };
 
-const Welcomes = ({ clients, orders, welcomes, setWelcomes, saveAll }) => {
-  const [edits, setEdits] = useState({});
-  const [copied, setCopied] = useState(null);
-
-  // Find clients whose first (and only so far, OR whose earliest) order was recent and who haven't been welcomed
-  const rows = clients
-    .filter(c => !welcomes[c.id])
-    .map(c => {
-      const co = orders.filter(o => o.clientId === c.id);
-      if (co.length === 0) return null; // No orders yet → no welcome (they haven't "committed")
-      // Sort ascending to find earliest order
-      const sorted = [...co].sort((a, b) => new Date(a.date) - new Date(b.date));
-      const firstO = sorted[0];
-      const daysSinceFirst = dSince(firstO.date);
-      if (daysSinceFirst > WELCOME_MAX_DAYS) return null; // Too late, the moment passed
-      // Find top product in that first order
-      const topItem = [...(firstO.items || [])].sort((a, b) => b.qty - a.qty)[0];
-      const topProd = topItem ? pF(topItem.productId)?.name : null;
-      return { client: c, firstO, daysSinceFirst, topProd };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.daysSinceFirst - b.daysSinceFirst); // Freshest first (most recently acquired clients on top)
-
-  const defaultMsg = (r) => {
-    const name = r.client.contact || r.client.name;
-    return `¡Hola ${name}!\n\nSoy José de Dulce Sabor y te quiero dar la bienvenida como nuevo cliente. ¡Gracias por tu confianza!\n\nAquí va toda la información que necesitas:\n\n📦 Productos: Dulces mexicanos auténticos con entrega directa en tu zona\n💰 Formas de pago: Efectivo, Zelle (megapg.norcal@gmail.com), Venmo (@MegaPG-NorCal) o cheque a nombre de Dulce Sabor LLC\n🌐 Ordena en línea cuando necesites: https://dulcesaborca.com\n📞 Cualquier duda o pedido: (707) 360-7420\n\nEstoy a tus órdenes. Mi meta es que tus ventas crezcan — si hay algo que puedo hacer mejor, avísame con confianza.\n\n¡Gracias y bienvenid@ a la familia Dulce Sabor!\nJosé Flores`;
-  };
-
-  const getMsg = (r) => edits[r.client.id] ?? defaultMsg(r);
-
-  const copyMsg = async (r) => {
-    try {
-      await navigator.clipboard.writeText(getMsg(r));
-      setCopied(r.client.id);
-      setTimeout(() => setCopied(null), 2000);
-    } catch(e) { alert("Copy falló — selecciona el texto manualmente"); }
-  };
-
-  const markSent = (r) => {
-    const updated = { ...welcomes, [r.client.id]: { sentAt: new Date().toISOString() } };
-    setWelcomes(updated);
-    saveAll("welcomes", updated);
-  };
-
-  const renderRow = (r) => {
-    const msg = getMsg(r);
-    return <div key={r.client.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: "4px solid #1B7340", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.client.name} <Badge text={r.client.tier} color={TIER_CLR[r.client.tier]} /> <Badge text="NUEVO" color="#1B7340" /></div>
-          <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.client.contact || "—"} • {r.client.phone || "sin teléfono"} • {r.client.zone || "—"}</div>
-          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Primer pedido: <b>{fmtD(r.firstO.date)}</b> ({fmt(r.firstO.total)}){r.topProd ? ` • ${r.topProd}` : ""}</div>
-        </div>
-        <Badge text={r.daysSinceFirst === 0 ? "Hoy" : `Hace ${r.daysSinceFirst}d`} color="#1B7340" />
-      </div>
-      <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.client.id]: e.target.value }))} rows={10} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
-      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-        <Btn small primary onClick={() => copyMsg(r)}>{copied === r.client.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
-        {r.client.phone && <WaBtn phone={r.client.phone} msg={msg} label="Abrir WhatsApp" small />}
-        <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
-        {edits[r.client.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.client.id]; return n; })}>Reset texto</Btn>}
-      </div>
-    </div>;
-  };
-
-  return <div>
-    <div style={{ background: "#E8F5E8", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1B7340" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#1B7340", marginBottom: 4 }}>Bienvenida a nuevos clientes</div>
-      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Clientes que hicieron su primer pedido en los últimos {WELCOME_MAX_DAYS} días y aún no han recibido mensaje de bienvenida. Un cliente solo aparece aquí una vez — después de "Marcar enviado", sale para siempre.</div>
-    </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 16 }}>
-      <Card title="Nuevos clientes" value={rows.length} color="#1B7340" />
-      <Card title="Ya bienvenidos" value={Object.keys(welcomes).length} color="#888" />
-    </div>
-    {rows.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay clientes nuevos pendientes de bienvenida. 🎉</div>}
-    {rows.map(r => renderRow(r))}
-  </div>;
-};
-
 const Announcements = ({ clients, templates, setTemplates, campaign, setCampaign, saveAll }) => {
   const [step, setStep] = useState(campaign.message ? "send" : "compose");
   const [showSave, setShowSave] = useState(false);
@@ -2259,7 +2181,7 @@ export default function App() {
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
-      {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} />}
+        {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}
       {tab === "anuncios" && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} />}
