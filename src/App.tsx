@@ -39,6 +39,8 @@ import {
 import { Representatives } from "./components/Representatives";
 import Commissions from "./components/Commissions";
 import Welcomes from "./components/Welcomes";
+import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components/Field";
+import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
 export type OrderStatus = "pending" | "delivered" | "paid";
@@ -812,67 +814,6 @@ const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, 
   </div>;
 };
 
-const Inventory = ({ inventory, setInventory, orders, saveAll }) => {
-  const [sr, setSr] = useState(false); const [ri, setRi] = useState([]);
-  const openR = () => { setRi(PRODUCTS.map(p => ({ productId: p.id, add: 0 }))); setSr(true); };
-  const doR = () => { const ni = [...inventory]; ri.forEach(r => { if (r.add > 0) { const idx = ni.findIndex(i => i.productId === r.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: ni[idx].stock + r.add, lastRestock: new Date().toISOString() }; else ni.push({ productId: r.productId, stock: r.add, lastRestock: new Date().toISOString() }); } }); setInventory(ni); saveAll("inventory", ni); setSr(false); };
-  const tC = inventory.reduce((s, i) => s + (pF(i.productId)?.cost || 0) * i.stock, 0);
-  const tR = inventory.reduce((s, i) => s + (pF(i.productId)?.price || 0) * i.stock, 0);
-  // FIX #4: Usar semanas reales
-  const weeks = calcWeeks(orders);
-  return <div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}><div style={{ display: "flex", gap: 10 }}><Card title="Cost" value={fmt(tC)} color="#C41E3A" /><Card title="Retail" value={fmt(tR)} color="#1B7340" /><Card title="Potential profit" value={fmt(tR - tC)} color="#6C3483" /></div><Btn primary onClick={openR}>+ Manual restock</Btn></div>
-    {PRODUCTS.map(p => { const inv = inventory.find(i => i.productId === p.id); const st = inv?.stock || 0; const low = st > 0 && st <= LOW; const out = st === 0; const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const wr = weeks > 0 ? Math.round(sold / weeks * 10) / 10 : 0; const wl = wr > 0 ? Math.round(st / wr * 10) / 10 : null;
-      return <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 12px", background: out ? "#FDE8E8" : low ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 3, fontSize: 13 }}>
-        <div><b>{p.name}</b> <span style={{ color: "#999", fontSize: 11 }}>{p.sku}</span></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}><span style={{ fontSize: 11, color: "#999" }}>{fmt(p.cost)} / {fmt(p.price)}</span><span style={{ fontSize: 11, color: "#777" }}>~{wr}/wk</span>{wl !== null && wl < 3 && <Badge text={`${wl}wk`} color="#C41E3A" />}<span style={{ fontSize: 18, fontWeight: 900, color: out ? "#C41E3A" : low ? "#D35400" : "#1B7340", minWidth: 50, textAlign: "right" }}>{st}</span>{(out || low) && <Badge text={out ? "OUT" : "LOW"} color={out ? "#C41E3A" : "#D35400"} />}</div></div>; })}
-    {sr && <Modal title="Manual restock" onClose={() => setSr(false)}><p style={{ fontSize: 13, color: "#777", marginBottom: 12 }}>For auto-restock from invoices, use Purchases tab.</p>{PRODUCTS.map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}><span style={{ fontSize: 13 }}>{p.name} <span style={{ color: "#999", fontSize: 11 }}>(stock: {inventory.find(i => i.productId === p.id)?.stock || 0})</span></span><input type="number" min="0" value={ri.find(r => r.productId === p.id)?.add || 0} onChange={e => setRi(prev => prev.map(r => r.productId === p.id ? { ...r, add: parseInt(e.target.value) || 0 } : r))} style={{ width: 60, padding: "5px", border: "1px solid #ddd", borderRadius: 4, fontSize: 13, textAlign: "center" }} /></div>)}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}><Btn onClick={() => setSr(false)}>Cancel</Btn><Btn primary onClick={doR}>Save</Btn></div></Modal>}
-  </div>;
-};
-
-const Purchases = ({ purchases, setPurchases, inventory, setInventory, saveAll }) => {
-  const [mp, setMp] = useState(false);
-  const [poF, setPoF] = useState({ date: new Date().toISOString().slice(0, 10), items: PRODUCTS.map(p => ({ productId: p.id, qty: 0, unitCost: p.cost })), invoiceNum: "", notes: "" });
-
-  const saveManual = () => {
-    const items = poF.items.filter(i => i.qty > 0); if (items.length === 0) return;
-    const total = items.reduce((s, i) => s + i.unitCost * i.qty, 0);
-    const po = { id: uid(), date: poF.date, invoiceNum: poF.invoiceNum, items: items.map(i => ({ ...i, name: pF(i.productId)?.name })), total, notes: poF.notes, source: "manual", created: new Date().toISOString() };
-    setPurchases(prev => { const n = [...prev, po]; saveAll("purchases", n); return n; });
-    const ni = [...inventory]; items.forEach(it => { const idx = ni.findIndex(i => i.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: ni[idx].stock + it.qty, lastRestock: new Date().toISOString() }; else ni.push({ productId: it.productId, stock: it.qty, lastRestock: new Date().toISOString() }); });
-    setInventory(ni); saveAll("inventory", ni); setMp(false); setPoF({ date: new Date().toISOString().slice(0, 10), items: PRODUCTS.map(p => ({ productId: p.id, qty: 0, unitCost: p.cost })), invoiceNum: "", notes: "" });
-  };
-
-  return <div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}><Card title="Total purchased" value={fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))} sub={`${purchases.length} POs`} color="#1A5276" /><Btn primary onClick={() => setMp(true)}>+ New purchase</Btn></div>
-    <ST>Purchase history</ST>
-    {purchases.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 30 }}>No purchases yet.</p>}
-    {purchases.slice().reverse().map(p => <div key={p.id} style={{ padding: "10px 14px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><div><b>{fmtD(p.date)}</b>{p.invoiceNum && <span style={{ color: "#999", marginLeft: 8 }}>#{p.invoiceNum}</span>}</div><b style={{ color: "#C41E3A" }}>{fmt(p.total)}</b></div><div style={{ fontSize: 12, color: "#777" }}>{p.items.map(i => `${i.name || i.productId} ×${i.qty}`).join(", ")}</div></div>)}
-
-    {mp && <Modal title="New purchase" onClose={() => setMp(false)} wide>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 12px" }}><Inp label="Date" type="date" value={poF.date} onChange={v => setPoF(p => ({ ...p, date: v }))} /><Inp label="Invoice #" value={poF.invoiceNum} onChange={v => setPoF(p => ({ ...p, invoiceNum: v }))} placeholder="MPG-2026-0042" /><Inp label="Notes" value={poF.notes} onChange={v => setPoF(p => ({ ...p, notes: v }))} /></div>
-      {PRODUCTS.map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}><span style={{ fontSize: 13 }}>{p.name} <span style={{ color: "#999", fontSize: 11 }}>{fmt(p.cost)}/case</span></span><input type="number" min="0" value={poF.items.find(it => it.productId === p.id)?.qty || 0} onChange={e => setPoF(prev => ({ ...prev, items: prev.items.map(it => it.productId === p.id ? { ...it, qty: parseInt(e.target.value) || 0 } : it) }))} style={{ width: 60, padding: "5px", border: "1px solid #ddd", borderRadius: 4, fontSize: 13, textAlign: "center" }} /></div>)}
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", marginTop: 8, borderTop: "2px solid #C41E3A", fontSize: 16, fontWeight: 700, color: "#C41E3A" }}><span>Total</span><span>{fmt(poF.items.reduce((s, i) => s + i.unitCost * i.qty, 0))}</span></div>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => setMp(false)}>Cancel</Btn><Btn primary onClick={saveManual}>Save & update inventory</Btn></div></Modal>}
-  </div>;
-};
-
-const Reports = ({ orders, clients, purchases }) => {
-  // FIX #4: Usar semanas reales
-  const weeks = calcWeeks(orders);
-  const md = {}; orders.forEach(o => { const m = o.date?.slice(0, 7) || "?"; if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 }; md[m].rev += o.total || 0; md[m].cost += o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); md[m].cases += o.items.reduce((a, it) => a + it.qty, 0); md[m].orders++; });
-  const ps = PRODUCTS.map(p => { const sold = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0), 0); const rev = orders.reduce((s, o) => s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + (p.price * (1 - (o.discount || 0))) * it.qty, 0), 0); return { ...p, sold, rev, prof: rev - p.cost * sold }; }).sort((a, b) => b.sold - a.sold);
-  const tR = orders.reduce((s, o) => s + (o.total || 0), 0); const tC = orders.reduce((s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0), 0);
-  return <div>
-    <ST>P&L summary <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)} week span)</span></ST>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}><Card title="Revenue" value={fmt(tR)} color="#1B7340" /><Card title="COGS" value={fmt(tC)} color="#C41E3A" /><Card title="Gross profit" value={fmt(tR - tC)} sub={tR > 0 ? `${Math.round((tR - tC) / tR * 100)}%` : ""} color="#1B7340" /><Card title="Purchased" value={fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))} color="#1A5276" /></div>
-    <ST>Monthly breakdown</ST>
-    {Object.entries(md).sort().reverse().map(([m, d]) => <div key={m} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><b style={{ minWidth: 70 }}>{m}</b><span>{d.orders} ord</span><span>{d.cases} cases</span><span>Rev: {fmt(d.rev)}</span><span>Cost: {fmt(d.cost)}</span><span style={{ color: "#1B7340", fontWeight: 700 }}>Profit: {fmt(d.rev - d.cost)}</span><span style={{ fontSize: 11, color: "#777" }}>{d.rev > 0 ? Math.round((d.rev - d.cost) / d.rev * 100) : 0}%</span></div>)}
-    <ST>Product performance</ST>
-    {ps.filter(p => p.sold > 0).map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span style={{ minWidth: 160 }}>{p.name}</span><span>{p.sold} cases</span><span>Rev: {fmt(p.rev)}</span><span style={{ color: "#1B7340", fontWeight: 600 }}>Profit: {fmt(p.prof)}</span></div>)}
-  </div>;
-};
-
 const Receipt = ({ order, clients }) => {
   if (!order) return <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>Select from Orders tab.</p>;
   const cl = clients.find(c => c.id === order.clientId); const disc = order.discount || 0;
@@ -977,115 +918,6 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
 
 // ===== MARKET INTELLIGENCE =====
 const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
-
-const FieldDashboard = ({ visits }) => {
-  const total = visits.length;
-  const withBrand = visits.filter(v => v.brand && v.brand !== "Neither/Unknown");
-  const megaPG = visits.filter(v => v.brand === "Mega PG" || v.brand === "Both").length;
-  const piguiUSA = visits.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length;
-  const interested = visits.filter(v => v.interest === "Very interested" || v.interest === "Somewhat interested").length;
-  const prices = visits.filter(v => v.publicPrice > 0).map(v => Number(v.publicPrice));
-  const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
-  const zones = ZONES.filter(z => z !== "Other").map(z => { const zv = visits.filter(v => v.zone === z); return { zone: z, total: zv.length, mega: zv.filter(v => v.brand === "Mega PG" || v.brand === "Both").length, pigui: zv.filter(v => v.brand === "Pigüi USA" || v.brand === "Both").length }; }).filter(z => z.total > 0);
-  const supplierCounts = {}; visits.forEach(v => { if (v.supplier) supplierCounts[v.supplier] = (supplierCounts[v.supplier] || 0) + 1; });
-
-  return <div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
-      <Card title="Stores visited" value={total} color="#1A5276" />
-      <Card title="Carry Mega PG" value={megaPG} sub={total > 0 ? `${Math.round(megaPG / total * 100)}%` : ""} color="#1B7340" />
-      <Card title="Carry Pigüi USA" value={piguiUSA} sub={total > 0 ? `${Math.round(piguiUSA / total * 100)}%` : ""} color="#C41E3A" />
-      <Card title="Interested" value={interested} sub={total > 0 ? `${Math.round(interested / total * 100)}%` : ""} color="#D35400" />
-    </div>
-    {avgPrice > 0 && <div style={{ fontSize: 13, color: "#555", marginBottom: 12 }}>Avg public price: <b>{fmt(avgPrice)}</b>/bag across {prices.length} stores</div>}
-    {zones.length > 0 && <><ST>Zone penetration</ST>{zones.map(z => <div key={z.zone} style={{ marginBottom: 8 }}><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{z.zone} <span style={{ color: "#999", fontWeight: 400 }}>({z.total} stores)</span></div><div style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: "#f0f0f0" }}>{z.mega > 0 && <div style={{ width: `${z.mega / z.total * 100}%`, background: "#1B7340" }} title={`Mega PG: ${z.mega}`} />}{z.pigui > 0 && <div style={{ width: `${z.pigui / z.total * 100}%`, background: "#C41E3A" }} title={`Pigüi USA: ${z.pigui}`} />}</div><div style={{ fontSize: 10, color: "#999", marginTop: 1 }}><span style={{ color: "#1B7340" }}>■ Mega PG: {z.mega}</span> <span style={{ color: "#C41E3A", marginLeft: 8 }}>■ Pigüi USA: {z.pigui}</span></div></div>)}</>}
-    {Object.keys(supplierCounts).length > 0 && <><ST>Supplier channels</ST>{Object.entries(supplierCounts).sort((a, b) => b[1] - a[1]).map(([sup, cnt]) => <div key={sup} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><span>{sup}</span><b>{cnt}</b></div>)}</>}
-    {total === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No field visits yet. Go to "Visits" tab to start capturing data.</div>}
-  </div>;
-};
-
-const VisitForm = ({ onSave, onClose, editVisit }) => {
-  const [f, setF] = useState(editVisit || { storeName: "", address: "", phone: "", contact: "", zone: "", storeType: "", date: new Date().toISOString().slice(0, 10), brand: "", productsSeen: [], supplier: "", publicPrice: "", interest: "", painPoints: "", leftSamples: false, samplesQty: "", notes: "", competitorProducts: "", footTraffic: "" });
-  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const toggleProd = (prod) => setF(p => ({ ...p, productsSeen: p.productsSeen.includes(prod) ? p.productsSeen.filter(x => x !== prod) : [...p.productsSeen, prod] }));
-  const doSave = () => { if (!f.storeName) return; onSave(editVisit ? { ...editVisit, ...f } : { ...f, id: uid(), created: new Date().toISOString() }); };
-  return <Modal title={editVisit ? "Edit visit" : "New field visit"} onClose={onClose} wide>
-    <ST>Store info</ST>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
-      <Inp label="Store name *" value={f.storeName} onChange={v => u("storeName", v)} placeholder="Dulcería Las Tapatías" />
-      <Inp label="Contact" value={f.contact} onChange={v => u("contact", v)} placeholder="María González" />
-      <Inp label="Address" value={f.address} onChange={v => u("address", v)} placeholder="1630 Sebastopol Rd" />
-      <Inp label="Phone" value={f.phone} onChange={v => u("phone", v)} placeholder="(707) 536-9543" />
-      <Inp label="Zone" value={f.zone} onChange={v => u("zone", v)} options={ZONES} />
-      <Inp label="Store type" value={f.storeType} onChange={v => u("storeType", v)} options={STORE_TYPES} />
-      <Inp label="Date" type="date" value={f.date} onChange={v => u("date", v)} />
-      <Inp label="Foot traffic" value={f.footTraffic} onChange={v => u("footTraffic", v)} options={["High", "Medium", "Low"]} />
-    </div>
-    <ST>Products & competition</ST>
-    <Inp label="Brand on shelf" value={f.brand} onChange={v => u("brand", v)} options={BRANDS} />
-    <div style={{ marginBottom: 10 }}><label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>Products seen</label><div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{PRODUCTS_SEEN.map(p => <button key={p} onClick={() => toggleProd(p)} style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #ddd", borderRadius: 4, cursor: "pointer", background: f.productsSeen.includes(p) ? "#1B7340" : "#fff", color: f.productsSeen.includes(p) ? "#fff" : "#333" }}>{p}</button>)}</div></div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><Inp label="Public price/bag" type="number" value={f.publicPrice} onChange={v => u("publicPrice", v)} placeholder="3.00" /><Inp label="Other competitor products" value={f.competitorProducts} onChange={v => u("competitorProducts", v)} placeholder="Vero, Lucas..." /></div>
-    <ST>Supplier & interest</ST>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><Inp label="Who supplies them?" value={f.supplier} onChange={v => u("supplier", v)} options={SUPPLIERS} /><Inp label="Interest level" value={f.interest} onChange={v => u("interest", v)} options={INTEREST_LVL} /></div>
-    <Inp label="Pain points" value={f.painPoints} onChange={v => u("painPoints", v)} textarea placeholder="What problems do they have with current supplier?" />
-    <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}><label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}><input type="checkbox" checked={f.leftSamples} onChange={e => u("leftSamples", e.target.checked)} /> Left samples</label>{f.leftSamples && <Inp label="Qty" type="number" value={f.samplesQty} onChange={v => u("samplesQty", v)} style={{ marginBottom: 0, width: 80 }} />}</div>
-    <Inp label="Notes" value={f.notes} onChange={v => u("notes", v)} textarea placeholder="Key observations, follow-up actions..." />
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={onClose}>Cancel</Btn><Btn primary onClick={doSave}>{editVisit ? "Update" : "Save visit"}</Btn></div>
-  </Modal>;
-};
-
-const VisitsList = ({ visits, onEdit, onDelete }) => {
-  const [search, setSearch] = useState(""); const [zf, setZf] = useState("");
-  const delRef = useRef(null); const [delId, setDelId] = useState(null);
-  const del = (id) => { if (delRef.current === id) { onDelete(id); delRef.current = null; setDelId(null); } else { delRef.current = id; setDelId(id); setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelId(null); } }, 3000); } };
-  const fil = visits.filter(v => (!search || v.storeName.toLowerCase().includes(search.toLowerCase()) || v.notes?.toLowerCase().includes(search.toLowerCase())) && (!zf || v.zone === zf)).sort((a, b) => new Date(b.date) - new Date(a.date));
-  return <div>
-    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search stores..." style={{ padding: "7px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, flex: 1, maxWidth: 250 }} /><select value={zf} onChange={e => setZf(e.target.value)} style={{ padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}><option value="">All zones</option>{ZONES.map(z => <option key={z} value={z}>{z}</option>)}</select></div>
-    {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 30 }}>No visits found.</p>}
-    {fil.map(v => <div key={v.id} style={{ padding: "10px 14px", background: "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5, borderLeft: `4px solid ${BRAND_CLR[v.brand] || "#888"}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div><b style={{ fontSize: 14 }}>{v.storeName}</b> {v.zone && <Badge text={v.zone} color="#6C3483" />} {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? "#1B7340" : v.interest.includes("Somewhat") ? "#D35400" : v.interest === "Already a client" ? "#1A5276" : "#888"} />}</div>
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}><Btn small onClick={() => onEdit(v)}>Edit</Btn><Btn small danger onClick={() => del(v.id)} style={delId === v.id ? { background: "#8B0000" } : {}}>{delId === v.id ? "Sure?" : "✕"}</Btn></div>
-      </div>
-      <div style={{ fontSize: 12, color: "#777" }}>{fmtD(v.date)} {v.storeType && `• ${v.storeType}`} {v.contact && `• ${v.contact}`} {v.publicPrice > 0 && `• ${fmt(v.publicPrice)}/bag`}</div>
-      {v.notes && <div style={{ fontSize: 12, color: "#555", marginTop: 4, lineHeight: 1.4 }}>{v.notes.length > 150 ? v.notes.slice(0, 150) + "..." : v.notes}</div>}
-      {v.productsSeen?.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>{v.productsSeen.map(p => <span key={p} style={{ fontSize: 10, padding: "1px 6px", background: "#f0f0f0", borderRadius: 3, color: "#666" }}>{p}</span>)}</div>}
-    </div>)}
-  </div>;
-};
-
-const FieldExport = ({ visits }) => {
-  const exportVisits = () => {
-    const lines = visits.map(v => [
-      `STORE: ${v.storeName}`,
-      `Zone: ${v.zone || "—"} | Type: ${v.storeType || "—"} | Date: ${fmtD(v.date)}`,
-      `Contact: ${v.contact || "—"} | Phone: ${v.phone || "—"}`,
-      `Address: ${v.address || "—"}`,
-      `Brand on shelf: ${v.brand || "—"}`,
-      `Products seen: ${v.productsSeen?.join(", ") || "—"}`,
-      `Supplier: ${v.supplier || "—"} | Public price: ${v.publicPrice ? fmt(v.publicPrice) : "—"}`,
-      `Interest: ${v.interest || "—"} | Foot traffic: ${v.footTraffic || "—"}`,
-      `Left samples: ${v.leftSamples ? `Yes (${v.samplesQty || "?"})` : "No"}`,
-      v.painPoints ? `Pain points: ${v.painPoints}` : null,
-      v.competitorProducts ? `Competitors: ${v.competitorProducts}` : null,
-      v.notes ? `Notes: ${v.notes}` : null,
-      "─".repeat(50)
-    ].filter(Boolean).join("\n")).join("\n\n");
-    const header = `DULCE SABOR — Field Intelligence Report\nExported: ${new Date().toLocaleString()}\nTotal visits: ${visits.length}\n${"═".repeat(50)}\n\n`;
-    const blob = new Blob([header + lines], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `DulceSabor_FieldData_${new Date().toISOString().slice(0,10)}.txt`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-  };
-  return <div>
-    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "16px 20px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 6 }}>Export field data for AI analysis</div>
-      <div style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>Download your visit data as a text file, then upload it to Claude for a full intelligence report — pricing analysis, competitive map, and follow-up plan. Free and with full context of your business.</div>
-    </div>
-    <Btn primary onClick={exportVisits} disabled={visits.length === 0}>Export {visits.length} visit{visits.length !== 1 ? "s" : ""} for analysis</Btn>
-    {visits.length === 0 && <p style={{ color: "#999", fontSize: 12, marginTop: 8 }}>Add visits first in the Visits tab.</p>}
-    {visits.length > 0 && <div style={{ marginTop: 16 }}><ST>Preview ({visits.length} visits)</ST>{visits.slice(-5).reverse().map(v => <div key={v.id} style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}><b>{v.storeName}</b> <span style={{ color: "#999" }}>{v.zone} • {fmtD(v.date)}</span> {v.brand && <Badge text={v.brand} color={BRAND_CLR[v.brand] || "#888"} />} {v.interest && <Badge text={v.interest} color={v.interest.includes("Very") ? "#1B7340" : "#D35400"} />}</div>)}{visits.length > 5 && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>...and {visits.length - 5} more</div>}</div>}
-  </div>;
-};
 
 const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
   const [edits, setEdits] = useState({});
@@ -2184,11 +2016,11 @@ export default function App() {
         {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}
       {tab === "anuncios" && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
       {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
-      {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} />}
-      {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} />}
+      {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} products={PRODUCTS} calcWeeks={calcWeeks}/>}
+      {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} products={PRODUCTS}/>}
       {tab === "reps" && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
       {tab === "commissions" && <Commissions representatives={representatives} clients={clients} orders={orders} commissions={commissions} setCommissions={setCommissions} saveAll={sv} />}
-      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} />}
+      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} products={PRODUCTS} calcWeeks={calcWeeks}/>}
       {tab === "receipt" && <Receipt order={ro} clients={clients} />}
       {tab === "field" && <FieldDashboard visits={visits} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}

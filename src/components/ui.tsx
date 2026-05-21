@@ -145,7 +145,7 @@ export const Modal: React.FC<ModalProps> = ({ title, onClose, children, wide }) 
 
 interface CardProps {
   title: string;
-  value: string;
+ value: string | number;
   sub?: string;
   color?: string;
 }
@@ -172,12 +172,12 @@ export const Card: React.FC<CardProps> = ({ title, value, sub, color }) => (
 
 interface InpProps {
   label?: string;
-  value: string;
+  value: string | number;
   onChange: (value: string) => void;
   type?: string;
   placeholder?: string;
   style?: React.CSSProperties;
-  options?: string[];
+  options?: readonly string[];
   textarea?: boolean;
 }
 
@@ -224,4 +224,22 @@ export const Inp: React.FC<InpProps> = ({
       />
     )}
   </div>
+);
+interface STProps {
+  children: React.ReactNode;
+}
+export const ST = ({ children }: STProps) => (
+  <h3
+    style={{
+      fontSize: 15,
+      fontWeight: 700,
+      marginBottom: 10,
+      marginTop: 16,
+      color: "#C41E3A",
+      borderBottom: "2px solid #C41E3A",
+      paddingBottom: 4,
+    }}
+  >
+    {children}
+  </h3>
 );
