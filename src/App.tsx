@@ -41,6 +41,7 @@ import Commissions from "./components/Commissions";
 import Welcomes from "./components/Welcomes";
 import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components/Field";
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
+import { Clients } from "./components/Clients";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
 export type OrderStatus = "pending" | "delivered" | "paid";
@@ -503,187 +504,6 @@ const Dashboard = ({ clients, orders, inventory }) => {
       </div>; })}</div>}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}><div><ST>Top clients by profit</ST>{cProf.slice(0, 6).map((c, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><div><b>{c.name}</b> <Badge text={c.tier} color={TIER_CLR[c.tier]} /></div><div><span style={{ color: "#1B7340", fontWeight: 700 }}>{fmt(c.prof)}</span><span style={{ color: "#999", marginLeft: 6 }}>{c.oc} ord</span></div></div>)}</div><div><ST>Product velocity <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)}wk span)</span></ST>{pVel.slice(0, 8).map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}><span>{p.name}</span><div style={{ display: "flex", gap: 10 }}><span>{p.sold} sold</span><span style={{ color: "#777" }}>{p.wr}/wk</span><span style={{ color: p.st === 0 ? "#C41E3A" : p.st <= LOW ? "#D35400" : "#1B7340", fontWeight: 600 }}>{p.st} stock</span>{p.wk < 3 && p.wk > 0 && <Badge text={`${p.wk}wk left`} color="#C41E3A" />}</div></div>)}</div></div>
     <ST>Recent orders</ST>{orders.slice(-6).reverse().map(o => { const cl = clients.find(c => c.id === o.clientId); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><div><b>{cl?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span></div><div style={{ display: "flex", gap: 8, alignItems: "center" }}><b>{fmt(o.total)}</b><span style={{ color: "#1B7340", fontSize: 11 }}>+{fmt((o.total || 0) - cost)}</span><Badge text={o.status} color={ST_CLR[o.status]} /></div></div>; })}
-  </div>;
-};
-
-// Props del componente Clients. Las props de orders/representatives se dejan
-// como any[] hasta que los bloques 2C/2D introduzcan los tipos `Order` y
-// `Representative`. saveAll viene del componente App raíz (la callback `sv`
-// definida con useCallback) y persiste la rebanada de estado al storage.
-interface ClientsProps {
-  clients: Client[];
-  setClients: Dispatch<SetStateAction<Client[]>>;
-  orders: any[];          // Order[] — bloque 2C
-  representatives: any[]; // Representative[] — bloque 2D
-  saveAll: (type: string, data: unknown) => void;
-}
-
-const Clients = ({ clients, setClients, orders, representatives, saveAll }: ClientsProps) => {
-  const emptyForm: ClientFormState = { name: "", address: "", phone: "", contact: "", zone: "", tier: "Lista", notes: "", showOnWebsite: false, publicDisplayName: "", publicHours: "", publicPhotoUrl: "", websitePermissionDate: "", permissionConfirmed: false, representativeId: "", priorHistoryBeforeRep: false };
-  const [sf, setSf] = useState<boolean>(false); const [edit, setEdit] = useState<string | null>(null); const [delC, setDelC] = useState<string | null>(null); const delRef = useRef<string | null>(null);
-  const [form, setForm] = useState<ClientFormState>(emptyForm); const [search, setSearch] = useState<string>("");
-  const [showWebSection, setShowWebSection] = useState<boolean>(false); const [uploading, setUploading] = useState<boolean>(false); const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null); const [bulkSyncing, setBulkSyncing] = useState<boolean>(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const openN = () => { setForm(emptyForm); setEdit(null); setShowWebSection(false); setSf(true); };
-  const openE = (c: Client) => { setForm({ ...emptyForm, ...c }); setEdit(c.id); setShowWebSection(!!c.showOnWebsite); setSf(true); };
-
-  const save = async () => {
-    if (!form.name) return;
-    // Si marcó publicar, exigir confirmación de permiso
-    if (form.showOnWebsite && !form.permissionConfirmed && !form.websitePermissionDate) {
-      setSyncMsg({ ok: false, text: "⚠️ Confirma que el cliente dio permiso antes de publicar" });
-      return;
-    }
-    const permDate = form.showOnWebsite && !form.websitePermissionDate ? new Date().toISOString().slice(0, 10) : form.websitePermissionDate;
-    const cleanForm = { ...form, websitePermissionDate: permDate };
-    let savedClient;
-    if (edit) {
-      setClients(prev => { const n = prev.map(c => c.id === edit ? (savedClient = { ...c, ...cleanForm }) : c); saveAll("clients", n); return n; });
-    } else {
-      savedClient = { ...cleanForm, id: uid(), created: new Date().toISOString() };
-      setClients(prev => { const n = [...prev, savedClient]; saveAll("clients", n); return n; });
-    }
-    // Sync a public_stores si está marcado o si era público y se desmarcó
-    if (savedClient && (cleanForm.showOnWebsite || edit)) {
-      const result = await syncClientToPublicStores(savedClient, orders);
-      if (!result.ok && cleanForm.showOnWebsite) {
-        setSyncMsg({ ok: false, text: "⚠️ Cliente guardado pero falló sincronización con sitio web" });
-        return;
-      }
-    }
-    setSf(false); setSyncMsg(null);
-  };
-
-  const del = (id: string) => {
-    if (delRef.current === id) {
-      const c = clients.find(x => x.id === id);
-      if (c?.showOnWebsite) syncClientToPublicStores({ ...c, showOnWebsite: false }, orders);
-      setClients(prev => { const n = prev.filter(c => c.id !== id); saveAll("clients", n); return n; });
-      delRef.current = null; setDelC(null);
-    } else {
-      delRef.current = id; setDelC(id);
-      setTimeout(() => { if (delRef.current === id) { delRef.current = null; setDelC(null); } }, 3000);
-    }
-  };
-
-  const handlePhotoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { setSyncMsg({ ok: false, text: "⚠️ Foto muy grande (máx 5MB)" }); return; }
-    setUploading(true); setSyncMsg(null);
-    const clientId = edit || `temp-${Date.now()}`;
-    const url = await uploadStorePhoto(file, clientId);
-    setUploading(false);
-    if (url) { setForm(p => ({ ...p, publicPhotoUrl: url })); setSyncMsg({ ok: true, text: "✓ Foto subida" }); }
-    else setSyncMsg({ ok: false, text: "⚠️ Error al subir foto" });
-    e.target.value = "";
-  };
-
-  const handleBulkSync = async () => {
-    setBulkSyncing(true);
-    const result = await syncAllPublicStores(clients, orders);
-    setBulkSyncing(false);
-    setSyncMsg({ ok: result.ok, text: result.ok ? `✓ Sincronizado: ${result.published} publicados, ${result.removed} removidos` : `⚠️ ${result.errors} errores durante sync` });
-    setTimeout(() => setSyncMsg(null), 5000);
-  };
-
-  const fil = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.zone?.toLowerCase().includes(search.toLowerCase()) || c.contact?.toLowerCase().includes(search.toLowerCase()));
-
-  return <div>
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients..." style={{ padding: "7px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, flex: 1, maxWidth: 280 }} />
-      <div style={{ display: "flex", gap: 6 }}>
-        <Btn small onClick={handleBulkSync} disabled={bulkSyncing}>{bulkSyncing ? "Sincronizando..." : "🔄 Sync sitio web"}</Btn>
-        <Btn primary onClick={openN}>+ New client</Btn>
-      </div>
-    </div>
-    {syncMsg && !sf && <div style={{ padding: "8px 12px", marginBottom: 10, background: syncMsg.ok ? "#E8F5E9" : "#FDE8E8", color: syncMsg.ok ? "#1B7340" : "#C41E3A", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{syncMsg.text}</div>}
-    {fil.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No clients. Click "+ New client".</p>}
-    {fil.map(c => {
-      const co = orders.filter(o => o.clientId === c.id);
-      const last = co.length > 0 ? co.sort((a, b) => new Date(b.date) - new Date(a.date))[0] : null;
-      const ts = co.reduce((s, o) => s + (o.total || 0), 0);
-      const days = last ? dSince(last.date) : null;
-      const fu = days !== null && days > FOLLOWUP_DAYS;
-      const publicInactive = c.showOnWebsite && (days === null || days > PUBLIC_INACTIVE_DAYS);
-      return <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: publicInactive ? "#FFF8E1" : fu ? "#FDF2E9" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 5 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
-            <span style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</span>
-            <Badge text={c.tier} color={TIER_CLR[c.tier]} />
-            {c.zone && <Badge text={c.zone} color="#6C3483" />}
-            {c.showOnWebsite && <Badge text="🌐 Web" color="#1A5276" />}
-            {c.representativeId && <Badge text={`🧑‍💼 ${(representatives || []).find(r => r.id === c.representativeId)?.name?.split(" ")[0] || "Rep"}`} color="#6C3483" />}
-            {publicInactive && <Badge text="⚠️ +90d inactivo" color="#D35400" />}
-            {fu && !publicInactive && <Badge text={`${days}d — follow up!`} color="#D35400" />}
-          </div>
-          <div style={{ fontSize: 12, color: "#777" }}>{[c.contact, c.phone].filter(Boolean).join(" • ")}</div>
-        </div>
-        <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{co.length} orders • {fmt(ts)}</div><div style={{ fontSize: 11, color: "#999" }}>{last ? `Last: ${fmtD(last.date)}` : "No orders"}</div></div>
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-          {c.phone && <WaBtn phone={c.phone} msg={`Hola ${c.contact || c.name}, soy José de Dulce Sabor.\n\n¿Cómo van las ventas de Slaps? ¿Listo para un reorden?\n\nOrdena en línea: https://dulcesaborca.com\n(707) 360-7420`} label="WA" small />}
-          <Btn small onClick={() => openE(c)}>Edit</Btn><Btn small danger onClick={() => del(c.id)} style={delC === c.id ? { minWidth: 52, background: "#8B0000" } : {}}>{delC === c.id ? "Sure?" : "✕"}</Btn>
-        </div>
-      </div>;
-    })}
-    {sf && <Modal title={edit ? "Edit client" : "New client"} onClose={() => setSf(false)}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
-        <Inp label="Store name *" value={form.name} onChange={v => setForm(p => ({ ...p, name: v }))} placeholder="Dulceria Mi Carnaval" />
-        <Inp label="Contact" value={form.contact} onChange={v => setForm(p => ({ ...p, contact: v }))} placeholder="Juan Pérez" />
-        <Inp label="Phone" value={form.phone} onChange={v => setForm(p => ({ ...p, phone: v }))} placeholder="(408) 555-1234" />
-        <Inp label="Zone" value={form.zone} onChange={v => setForm(p => ({ ...p, zone: v }))} options={ZONES} />
-        <Inp label="Tier" value={form.tier} onChange={v => setForm(p => ({ ...p, tier: v }))} options={TIERS} />
-        <Inp label="Address" value={form.address} onChange={v => setForm(p => ({ ...p, address: v }))} placeholder="1161 E Santa Clara St" />
-      </div>
-      <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea />
-
-      {/* === REPRESENTANTE ASIGNADO (Deploy A) === */}
-      <div style={{ marginTop: 12, padding: "10px 14px", border: "1px solid #d4ebd4", background: "#f4faf4", borderRadius: 8 }}>
-        <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#1B7340", marginBottom: 6 }}>🧑‍💼 Representante asignado</label>
-        <select value={form.representativeId || ""} onChange={e => setForm(p => ({ ...p, representativeId: e.target.value }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginBottom: 8 }}>
-          <option value="">— Cuenta directa de José (sin representante) —</option>
-          {(representatives || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
-        {form.representativeId && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: 8, background: "#FFF8E1", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
-          <input type="checkbox" checked={!!form.priorHistoryBeforeRep} onChange={e => setForm(p => ({ ...p, priorHistoryBeforeRep: e.target.checked }))} style={{ width: 16, height: 16, marginTop: 2 }} />
-          <span><b>Historia previa:</b> este cliente ya nos compraba antes de ser asignado al representante. (Sus pedidos contarán como <b>residual 5%</b>, no como cuenta nueva 7%.)</span>
-        </label>}
-      </div>
-
-      {/* === SECCIÓN PUBLICAR EN SITIO WEB (v5.10) === */}
-      <div style={{ marginTop: 12, border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
-        <button onClick={() => setShowWebSection(s => !s)} style={{ width: "100%", padding: "10px 14px", background: form.showOnWebsite ? "#E3F2FD" : "#F8F8F8", border: "none", textAlign: "left", fontSize: 13, fontWeight: 700, color: "#1A5276", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span>🌐 Publicar en dulcesaborca.com {form.showOnWebsite && "✓"}</span>
-          <span style={{ fontSize: 16 }}>{showWebSection ? "▾" : "▸"}</span>
-        </button>
-        {showWebSection && <div style={{ padding: "12px 14px", background: "#fff" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-            <input type="checkbox" checked={!!form.showOnWebsite} onChange={e => setForm(p => ({ ...p, showOnWebsite: e.target.checked }))} style={{ width: 18, height: 18 }} />
-            Mostrar esta tienda en /donde-comprar
-          </label>
-          {form.showOnWebsite && <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
-              <Inp label="Nombre comercial (opcional)" value={form.publicDisplayName} onChange={v => setForm(p => ({ ...p, publicDisplayName: v }))} placeholder={form.name || "Si distinto al legal"} />
-              <Inp label="Horario público" value={form.publicHours} onChange={v => setForm(p => ({ ...p, publicHours: v }))} placeholder="Lun-Sáb 9am-8pm" />
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 5 }}>Foto del local</label>
-              {form.publicPhotoUrl && <div style={{ marginBottom: 6 }}><img src={form.publicPhotoUrl} alt="Local" style={{ maxWidth: 200, maxHeight: 120, borderRadius: 6, border: "1px solid #ddd" }} /></div>}
-              <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: "none" }} />
-              <Btn small onClick={() => fileInputRef.current?.click()} disabled={uploading}>{uploading ? "Subiendo..." : form.publicPhotoUrl ? "📷 Cambiar foto" : "📷 Subir foto"}</Btn>
-              {form.publicPhotoUrl && <Btn small onClick={() => setForm(p => ({ ...p, publicPhotoUrl: "" }))} style={{ marginLeft: 6 }}>Quitar</Btn>}
-            </div>
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, padding: 10, background: "#FFF8E1", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
-              <input type="checkbox" checked={!!form.permissionConfirmed} onChange={e => setForm(p => ({ ...p, permissionConfirmed: e.target.checked }))} style={{ width: 16, height: 16, marginTop: 2 }} />
-              <span><b>Confirmo</b> que el cliente me dio permiso para publicar su negocio en dulcesaborca.com (foto, dirección, horario y WhatsApp). {form.websitePermissionDate && <span style={{ color: "#777" }}>— Permiso desde: {fmtD(form.websitePermissionDate)}</span>}</span>
-            </label>
-          </>}
-          {syncMsg && <div style={{ padding: "6px 10px", marginTop: 10, background: syncMsg.ok ? "#E8F5E9" : "#FDE8E8", color: syncMsg.ok ? "#1B7340" : "#C41E3A", borderRadius: 6, fontSize: 12 }}>{syncMsg.text}</div>}
-        </div>}
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><Btn onClick={() => { setSf(false); setSyncMsg(null); }}>Cancel</Btn><Btn primary onClick={save}>{edit ? "Update" : "Add"}</Btn></div>
-    </Modal>}
   </div>;
 };
 
@@ -2009,7 +1829,16 @@ export default function App() {
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div></div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} purchases={purchases} />}
-      {tab === "clients" && <Clients clients={clients} setClients={setClients} orders={orders} representatives={representatives} saveAll={sv} />}
+      {tab === "clients" && <Clients
+        clients={clients}
+        setClients={setClients}
+        orders={orders}
+        representatives={representatives}
+        saveAll={sv}
+        syncClientToPublicStores={syncClientToPublicStores}
+        syncAllPublicStores={syncAllPublicStores}
+        uploadStorePhoto={uploadStorePhoto}
+      />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}

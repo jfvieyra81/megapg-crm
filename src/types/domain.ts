@@ -67,6 +67,34 @@ export interface Client {
 }
 
 // ============================================================
+// Formulario de alta/edición de Cliente
+// ============================================================
+
+/** Estado del formulario de alta/edición del componente Clients.
+ *  NO incluye `id`, `created`, `source` — esos se asignan al guardar
+ *  (o vienen del cliente existente al editar). Todos los campos son
+ *  requeridos como string/boolean con defaults vacíos para que React
+ *  no se queje de inputs uncontrolled. Agregado en Block 4.e. */
+export interface ClientFormState {
+  name: string;
+  address: string;
+  phone: string;
+  contact: string;
+  zone: string;
+  tier: ClientTier;
+  notes: string;
+  showOnWebsite: boolean;
+  publicDisplayName: string;
+  publicHours: string;
+  publicPhotoUrl: string;
+  websitePermissionDate: string;
+  permissionConfirmed: boolean;
+  representativeId: string;
+  priorHistoryBeforeRep: boolean;
+}
+
+
+// ============================================================
 // Pedido
 // ============================================================
 
