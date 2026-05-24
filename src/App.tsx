@@ -42,19 +42,15 @@ import Welcomes from "./components/Welcomes";
 import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components/Field";
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
+import { Orders } from "./components/Orders";
+import { Receipt } from "./components/Receipt";
+import { PRODUCTS, pF, TIER_DISC, ST_CLR } from "./lib/catalog";
+import type { InventoryItem } from "./lib/catalog";
 // ─── Tipos del dominio (incremental: 2A=primitivos+constantes, 2B=Client) ───
+
 export type Tier = "Lista" | "Bronce" | "Plata" | "Oro";
 export type OrderStatus = "pending" | "delivered" | "paid";
 export type Brand = "Mega PG" | "Pigüi USA" | "Both" | "Neither/Unknown";
-
-export type Product = {
-  readonly id: string;
-  readonly name: string;
-  readonly sku: string;
-  readonly price: number;
-  readonly cost: number;
-  readonly bags: number;
-};
 
 // ─── Bloque 2B: Client ────────────────────────────────────────────────────────
 // Cliente del CRM. Forma derivada del código real del archivo (formulario de
@@ -123,37 +119,6 @@ const SUPA_HEADERS: Record<string, string> = { "Content-Type": "application/json
 const cloudEnabled: boolean = !!(SUPA_URL && SUPA_KEY);
 
 // ─── Catálogo de productos ────────────────────────────────────────────────────
-const PRODUCTS: readonly Product[] = [
-  // SLAPS LOLLIPOPS
-  { id: "slaps-mix", name: "Slaps Mix", sku: "DPG-SLPMIX-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-tam", name: "Slaps Tamarind", sku: "DPG-SLPTAM-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-mgo", name: "Slaps Mango", sku: "DPG-SLPMGO-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-wtm", name: "Slaps Watermelon", sku: "DPG-SLPWTM-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-app", name: "Slaps Green Apple", sku: "DPG-SLPAPP-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-dbx", name: "Slaps DobleX", sku: "DPG-DBXPIC-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-pkl", name: "Slaps Pickle", sku: "DPG-SLPPIK-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-dev", name: "Slaps Devora", sku: "DPG-SLPDEV-40", price: 80, cost: 50.00, bags: 40 },
-  { id: "slaps-aln", name: "Slaps DevorAlien", sku: "DPG-SLPALN-40", price: 80, cost: 50.00, bags: 40 },
-  // CACHETADA
-  { id: "cachetada", name: "Pigüi Cachetada 100ct", sku: "DPG-CACHE100", price: 270, cost: 181, bags: 100 },
-  // SOFT CANDIES
-  { id: "piguileta", name: "Piguileta Fuego", sku: "DPG-PGFUEG-16", price: 85, cost: 57.60, bags: 16 },
-  { id: "piguileta-c", name: "Piguileta Cool", sku: "DPG-PGCOOL-16", price: 85, cost: 57.60, bags: 16 },
-  { id: "mega-hue-d", name: "Mega Huevón Display", sku: "DPG-MGAHUE-30", price: 84, cost: 51.20, bags: 16 },
-  { id: "mega-hue-b", name: "Mega Huevón Bolsa", sku: "DPG-MGAHUE-10", price: 105, cost: 62.00, bags: 10 },
-  { id: "don-cuco", name: "Bolas Don Cuco", sku: "DPG-DONCUC-12", price: 115, cost: 76.80, bags: 12 },
-  { id: "mordidilla", name: "Mordidilla", sku: "DPG-MORDCH-12", price: 60, cost: 35.40, bags: 12 },
-  { id: "flamkiyos", name: "Flamkiyos", sku: "DPG-FLAMKI-10", price: 93, cost: 55.20, bags: 12 },
-  // CANDY POWDER
-  { id: "cache-chm", name: "Cache Colors Chamoy Lg", sku: "DPG-CLRCHM-12", price: 115, cost: 76.80, bags: 12 },
-  { id: "cache-mix", name: "Cache Colors Assorted Lg", sku: "DPG-CLRMIX-12", price: 115, cost: 76.80, bags: 12 },
-  { id: "cache-pkl", name: "Cache Colors Pickle Lg", sku: "DPG-CLRPIK-12", price: 135, cost: 90.60, bags: 12 },
-  // SLIM LICKS & BIBI LICKS
-  { id: "slim-sour", name: "Slim Licks Sour", sku: "MPG-SLMSOU-24", price: 32, cost: 21.12, bags: 24 },
-  { id: "slim-spcy", name: "Slim Licks Spicy", sku: "MPG-SLMSPI-24", price: 32, cost: 21.12, bags: 24 },
-  { id: "bibi-sour", name: "Bibi Licks Sour", sku: "MPG-BIBSOU-12", price: 85, cost: 53.76, bags: 12 },
-  { id: "bibi-spcy", name: "Bibi Licks Spicy", sku: "MPG-BIBISPI-12", price: 85, cost: 53.76, bags: 12 },
-];
 
 // ─── Enums de UI ──────────────────────────────────────────────────────────────
 const ZONES: readonly string[] = ["Santa Rosa / Sonoma", "Sacramento", "San Jose / Bay Area", "Mendocino / Ukiah", "Oakland / Bay Area", "Other"];
@@ -165,9 +130,7 @@ const SUPPLIERS: readonly string[] = ["Pigüi USA (LA)", "Local distributor", "T
 const PRODUCTS_SEEN: readonly string[] = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/Cachetadas", "Cache Colors", "Slim Licks", "Bibi Licks", "Piguileta", "Mega Huevón", "Flamkiyos", "Mordidilla", "Don Cuco", "Other Pigüi", "None"];
 
 // ─── Tablas de lookup ─────────────────────────────────────────────────────────
-const TIER_DISC: Record<Tier, number> = { Lista: 0, Bronce: 0.03125, Plata: 0.0625, Oro: 0.125 };
 const TIER_CLR: Record<Tier, string> = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
-const ST_CLR: Record<OrderStatus, string> = { pending: "#D35400", delivered: "#1A5276", paid: "#1B7340" };
 
 // ─── Umbrales operativos ──────────────────────────────────────────────────────
 const LOW: number = 5;
@@ -193,7 +156,6 @@ const uid = (): string => Date.now().toString(36) + Math.random().toString(36).s
 const fmt = (n: number | string | null | undefined): string => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const fmtD = (d: string | number | Date): string => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return String(d); } };
 const dSince = (d: string | number | Date): number => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
-const pF = (id: string): Product | undefined => PRODUCTS.find(p => p.id === id);
 
 // ─── Facade de localStorage ───────────────────────────────────────────────────
 // El tipo del payload es `unknown` por ahora; bloque 2D introducirá un tipo
@@ -505,235 +467,6 @@ const Dashboard = ({ clients, orders, inventory }) => {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}><div><ST>Top clients by profit</ST>{cProf.slice(0, 6).map((c, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><div><b>{c.name}</b> <Badge text={c.tier} color={TIER_CLR[c.tier]} /></div><div><span style={{ color: "#1B7340", fontWeight: 700 }}>{fmt(c.prof)}</span><span style={{ color: "#999", marginLeft: 6 }}>{c.oc} ord</span></div></div>)}</div><div><ST>Product velocity <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({Math.round(weeks)}wk span)</span></ST>{pVel.slice(0, 8).map(p => <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}><span>{p.name}</span><div style={{ display: "flex", gap: 10 }}><span>{p.sold} sold</span><span style={{ color: "#777" }}>{p.wr}/wk</span><span style={{ color: p.st === 0 ? "#C41E3A" : p.st <= LOW ? "#D35400" : "#1B7340", fontWeight: 600 }}>{p.st} stock</span>{p.wk < 3 && p.wk > 0 && <Badge text={`${p.wk}wk left`} color="#C41E3A" />}</div></div>)}</div></div>
     <ST>Recent orders</ST>{orders.slice(-6).reverse().map(o => { const cl = clients.find(c => c.id === o.clientId); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}><div><b>{cl?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span></div><div style={{ display: "flex", gap: 8, alignItems: "center" }}><b>{fmt(o.total)}</b><span style={{ color: "#1B7340", fontSize: 11 }}>+{fmt((o.total || 0) - cost)}</span><Badge text={o.status} color={ST_CLR[o.status]} /></div></div>; })}
   </div>;
-};
-
-const Orders = ({ clients, orders, setOrders, inventory, setInventory, saveAll, setTab, setRO }) => {
-  const [sf, setSf] = useState(false); const [delConfirm, setDelConfirm] = useState(null); const delORef = useRef(null); const [stockAck, setStockAck] = useState(false); const [form, setForm] = useState({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" });
-  // Deploy C: return modal state
-  const [returnFor, setReturnFor] = useState(null); // order being marked as returned
-  const [returnForm, setReturnForm] = useState({ amount: "", date: new Date().toISOString().slice(0, 10), notes: "" });
-  const openN = () => { setForm({ clientId: "", date: new Date().toISOString().slice(0, 10), items: [{ productId: "", qty: 1 }], notes: "", status: "pending" }); setSf(true); };
-  const addL = () => setForm(p => ({ ...p, items: [...p.items, { productId: "", qty: 1 }] }));
-  const remL = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
-  const upL = (i, f, v) => setForm(p => { const items = [...p.items]; items[i] = { ...items[i], [f]: f === "qty" ? Math.max(1, parseInt(v) || 1) : v }; return { ...p, items }; });
-  const cl = clients.find(c => c.id === form.clientId); const disc = cl ? TIER_DISC[cl.tier] || 0 : 0;
-  const calcT = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.price * it.qty * (1 - disc) : 0); }, 0);
-  const calcC = () => form.items.reduce((s, it) => { const p = pF(it.productId); return s + (p ? p.cost * it.qty : 0); }, 0);
-
-  // FIX #5: Checar stock antes de guardar orden
-  const getStockWarnings = () => {
-    const warnings = [];
-    form.items.filter(it => it.productId).forEach(it => {
-      const inv = inventory.find(i => i.productId === it.productId);
-      const avail = inv?.stock || 0;
-      if (it.qty > avail) {
-        const p = pF(it.productId);
-        warnings.push(`${p?.name}: requesting ${it.qty}, only ${avail} in stock`);
-      }
-    });
-    return warnings;
-  };
-
-  const saveO = () => { if (!form.clientId || form.items.every(it => !it.productId)) return;
-    const warnings = getStockWarnings();
-    if (warnings.length > 0 && !stockAck) { setStockAck(true); return; }
-    const vi = form.items.filter(it => it.productId); const total = calcT(); const order = { id: uid(), ...form, items: vi, total, discount: disc, created: new Date().toISOString() }; const ni = [...inventory]; vi.forEach(it => { const idx = ni.findIndex(inv => inv.productId === it.productId); if (idx >= 0) ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) }; }); setOrders(prev => { const n = [...prev, order]; saveAll("orders", n); return n; }); setInventory(ni); saveAll("inventory", ni); setSf(false); setStockAck(false); };
-  const upSt = (id, st) => setOrders(prev => { const n = prev.map(o => {
-    if (o.id !== id) return o;
-    const updated = { ...o, status: st };
-    // Deploy A: auto-populate paidDate when status transitions to paid; clear if moving away
-    if (st === "paid" && !o.paidDate) updated.paidDate = new Date().toISOString().slice(0, 10);
-    if (st !== "paid" && o.paidDate) updated.paidDate = null;
-    return updated;
-  }); saveAll("orders", n); return n; });
-  const delO = (id) => { if (delORef.current === id) { setOrders(prev => { const n = prev.filter(o => o.id !== id); saveAll("orders", n); return n; }); delORef.current = null; setDelConfirm(null); } else { delORef.current = id; setDelConfirm(id); setTimeout(() => { if (delORef.current === id) { delORef.current = null; setDelConfirm(null); } }, 3000); } };
-  const qReorder = (o) => { setForm({ clientId: o.clientId, date: new Date().toISOString().slice(0, 10), items: o.items.map(it => ({ productId: it.productId, qty: it.qty })), notes: "Reorder from " + fmtD(o.date), status: "pending" }); setSf(true); };
-
-  // Deploy C: open / save / clear return
-  const openReturn = (o) => {
-    setReturnFor(o);
-    setReturnForm({
-      amount: o.returnedAmount ? String(o.returnedAmount) : "",
-      date: o.returnedDate || new Date().toISOString().slice(0, 10),
-      notes: o.returnedNotes || ""
-    });
-  };
-  const saveReturn = () => {
-    if (!returnFor) return;
-    const amt = parseFloat(returnForm.amount);
-    if (isNaN(amt) || amt < 0) { alert("Cantidad inválida"); return; }
-    if (amt > (returnFor.total || 0)) { if (!confirm(`La devolución (${fmt(amt)}) supera el total del pedido (${fmt(returnFor.total)}). ¿Continuar?`)) return; }
-    setOrders(prev => { const n = prev.map(o => o.id === returnFor.id ? { ...o, returnedAmount: amt, returnedDate: returnForm.date, returnedNotes: returnForm.notes } : o); saveAll("orders", n); return n; });
-    setReturnFor(null);
-  };
-  const clearReturn = () => {
-    if (!returnFor) return;
-    if (!confirm("¿Eliminar el registro de devolución de este pedido?")) return;
-    setOrders(prev => { const n = prev.map(o => o.id === returnFor.id ? { ...o, returnedAmount: 0, returnedDate: null, returnedNotes: "" } : o); saveAll("orders", n); return n; });
-    setReturnFor(null);
-  };
-
-  return <div>
-    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={openN}>+ New order</Btn></div>
-    {orders.length === 0 && <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>No orders yet.</p>}
-    {orders.slice().reverse().map(o => { const c = clients.find(x => x.id === o.clientId); const tc = o.items.reduce((a, it) => a + it.qty, 0); const cost = o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0); const prof = (o.total || 0) - cost;
-      const hasReturn = o.returnedAmount && o.returnedAmount > 0;
-      return <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: hasReturn ? "#FDF2F2" : "#fff", border: "1px solid #eee", borderRadius: 8, marginBottom: 4, fontSize: 13 }}>
-        <div style={{ flex: 1, minWidth: 0 }}><b>{c?.name || "?"}</b> <span style={{ color: "#999" }}>{fmtD(o.date)}</span> <span style={{ color: "#777" }}>{tc} cases</span>{o.discount > 0 && <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />}{hasReturn && <Badge text={`↩ -${fmt(o.returnedAmount)}`} color="#C41E3A" />}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}><div style={{ textAlign: "right", marginRight: 4 }}><div style={{ fontWeight: 700 }}>{fmt(o.total)}</div><div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div></div>
-        <select value={o.status} onChange={e => upSt(o.id, e.target.value)} style={{ padding: "3px 6px", border: "1px solid #ddd", borderRadius: 4, fontSize: 11, background: o.status === "paid" ? "#E8F5E8" : o.status === "delivered" ? "#EBF5FB" : "#FDF2E9" }}><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="paid">Paid</option></select>
-        {c?.phone && <WaBtn phone={c.phone} msg={o.status !== "paid" ? waPayment(o, c) : waOrder(o, c)} label={o.status !== "paid" ? "Remind" : "WA"} small />}
-        <Btn small onClick={() => qReorder(o)} style={{ fontSize: 10 }}>Reorder</Btn><Btn small onClick={() => { setRO(o); setTab("receipt"); }} style={{ fontSize: 10 }}>Receipt</Btn>
-        {o.status === "paid" && <Btn small onClick={() => openReturn(o)} style={{ fontSize: 10, background: hasReturn ? "#C41E3A" : "#f0f0f0", color: hasReturn ? "#fff" : "#333" }}>↩ {hasReturn ? "Edit" : "Devol"}</Btn>}
-        <Btn small danger onClick={() => delO(o.id)} style={delConfirm === o.id ? { fontSize: 10, minWidth: 52, background: "#8B0000" } : { fontSize: 10 }}>{delConfirm === o.id ? "Sure?" : "✕"}</Btn></div></div>; })}
-    {sf && <Modal title="New order" onClose={() => setSf(false)} wide>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}><div style={{ marginBottom: 10 }}><label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>Client *</label><select value={form.clientId} onChange={e => setForm(p => ({ ...p, clientId: e.target.value }))} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.tier})</option>)}</select></div><Inp label="Date" type="date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} /></div>
-      {form.clientId && cl && <div style={{ fontSize: 12, color: "#1B7340", marginBottom: 10, padding: "6px 10px", background: "#E8F5E8", borderRadius: 6 }}>{cl.name} — {cl.tier} {disc > 0 ? `(${Math.round(disc * 100)}% off)` : "(list price)"}</div>}
-      <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Items</label>
-      {form.items.map((it, i) => {
-        // FIX #5: Mostrar stock disponible y warning visual
-        const inv = it.productId ? inventory.find(x => x.productId === it.productId) : null;
-        const avail = inv?.stock || 0;
-        const overStock = it.productId && it.qty > avail;
-        return <div key={i} style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
-          <select value={it.productId} onChange={e => upL(i, "productId", e.target.value)} style={{ flex: 2, padding: "7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Product --</option>{PRODUCTS.map(p => { const pInv = inventory.find(x => x.productId === p.id); return <option key={p.id} value={p.id}>{p.name} ({fmt(p.price)}) — {pInv?.stock || 0} avail</option>; })}</select>
-          <input type="number" min="1" value={it.qty} onChange={e => upL(i, "qty", e.target.value)} style={{ width: 55, padding: "7px", border: `1px solid ${overStock ? "#C41E3A" : "#ddd"}`, borderRadius: 6, fontSize: 13, textAlign: "center", background: overStock ? "#FDE8E8" : "#fff" }} />
-          <span style={{ fontSize: 12, color: "#1B7340", minWidth: 60, fontWeight: 600 }}>{it.productId ? fmt(pF(it.productId)?.price * it.qty * (1 - disc)) : ""}</span>
-          {overStock && <span style={{ fontSize: 10, color: "#C41E3A", fontWeight: 700, whiteSpace: "nowrap" }}>only {avail}!</span>}
-          {form.items.length > 1 && <button onClick={() => remL(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#C41E3A", fontSize: 16 }}>✕</button>}
-        </div>; })}
-      <Btn small onClick={addL} style={{ marginTop: 8 }}>+ Add product</Btn>
-      <Inp label="Notes" value={form.notes} onChange={v => setForm(p => ({ ...p, notes: v }))} textarea style={{ marginTop: 10 }} />
-      {getStockWarnings().length > 0 && <div style={{ background: "#FDF2E9", padding: "8px 12px", borderRadius: 6, marginTop: 8, fontSize: 12, color: "#D35400", borderLeft: "3px solid #D35400" }}>
-        <b>Stock warnings:</b> {getStockWarnings().join("; ")}
-        <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>You can still create the order — inventory will go to 0.</div>
-      </div>}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#E8F5E8", borderRadius: 8, margin: "12px 0" }}><div><div style={{ fontSize: 12, color: "#1B7340" }}>Total</div><div style={{ fontSize: 24, fontWeight: 900, color: "#1B7340" }}>{fmt(calcT())}</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 12, color: "#777" }}>Cost: {fmt(calcC())}</div><div style={{ fontSize: 16, fontWeight: 700, color: "#1B7340" }}>Profit: {fmt(calcT() - calcC())}</div></div></div>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn onClick={() => { setSf(false); setStockAck(false); }}>Cancel</Btn><Btn primary onClick={saveO}>{stockAck ? "Confirm — create anyway" : "Create order"}</Btn></div>
-    </Modal>}
-
-    {/* Deploy C: Return modal */}
-    {returnFor && <Modal title="Registrar devolución / refund" onClose={() => setReturnFor(null)}>
-      <div style={{ background: "#FDF2F2", borderLeft: "4px solid #C41E3A", padding: "10px 14px", borderRadius: 6, marginBottom: 12, fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-        <b>Pedido:</b> {clients.find(c => c.id === returnFor.clientId)?.name || "?"} • {fmtD(returnFor.date)} • Total: <b>{fmt(returnFor.total)}</b>
-        <div style={{ marginTop: 4 }}>El monto registrado se restará de las comisiones del representante en el mes de la fecha de devolución (§6.1).</div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
-        <Inp label="Monto devuelto *" value={returnForm.amount} onChange={v => setReturnForm(p => ({ ...p, amount: v.replace(/[^0-9.]/g, "") }))} placeholder="0.00" />
-        <Inp label="Fecha de devolución *" type="date" value={returnForm.date} onChange={v => setReturnForm(p => ({ ...p, date: v }))} />
-      </div>
-      <Inp label="Notas (motivo, etc)" value={returnForm.notes} onChange={v => setReturnForm(p => ({ ...p, notes: v }))} textarea />
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
-        {returnFor.returnedAmount > 0 ? <Btn danger onClick={clearReturn}>Eliminar devolución</Btn> : <span />}
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn onClick={() => setReturnFor(null)}>Cancel</Btn>
-          <Btn primary onClick={saveReturn}>Guardar devolución</Btn>
-        </div>
-      </div>
-    </Modal>}
-  </div>;
-};
-
-const Receipt = ({ order, clients }) => {
-  if (!order) return <p style={{ color: "#999", fontSize: 13, textAlign: "center", padding: 40 }}>Select from Orders tab.</p>;
-  const cl = clients.find(c => c.id === order.clientId); const disc = order.discount || 0;
-  const sub = order.items.reduce((s, it) => s + (pF(it.productId)?.price || 0) * it.qty, 0);
-  const orderNum = order.id.slice(-6).toUpperCase();
-
-  const downloadPDF = () => {
-    const doc = new jsPDF({ unit: "pt", format: "letter" });
-    const W = doc.internal.pageSize.getWidth();
-    const mg = 50, cw = W - mg * 2;
-    let y = 50;
-    doc.setFillColor(196, 30, 58); doc.rect(0, 0, W, 6, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(22); doc.setTextColor(196, 30, 58);
-    doc.text("DULCE SABOR", W / 2, y, { align: "center" }); y += 18;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
-    doc.text("Dulces Mexicanos Aut\u00e9nticos \u2022 Norte de California", W / 2, y, { align: "center" }); y += 14;
-    doc.setFontSize(10); doc.setTextColor(60, 60, 60);
-    doc.text("Jos\u00e9 Flores \u2022 (707) 360-7420 \u2022 megapg.norcal@gmail.com", W / 2, y, { align: "center" }); y += 10;
-    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 20;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(30, 30, 30);
-    doc.text(cl?.name || "\u2014", mg, y); doc.text(`Pedido #${orderNum}`, W - mg, y, { align: "right" }); y += 15;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100, 100, 100);
-    if (cl?.address) doc.text(cl.address, mg, y);
-    doc.text(fmtD(order.date), W - mg, y, { align: "right" }); y += 14;
-    if (cl?.phone) doc.text(cl.phone, mg, y);
-    const sc = { pending: [211, 84, 0], delivered: [26, 82, 118], paid: [27, 115, 64] }[order.status] || [100, 100, 100];
-    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(sc[0], sc[1], sc[2]);
-    doc.text(order.status.toUpperCase(), W - mg, y, { align: "right" }); y += (cl?.phone ? 14 : 8) + 10;
-    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg, y, W - mg, y); y += 16;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(196, 30, 58);
-    const cols = [mg, mg + cw * 0.50, mg + cw * 0.65, mg + cw * 0.82];
-    doc.text("Producto", cols[0], y); doc.text("Cant.", cols[1], y, { align: "center" }); doc.text("Precio", cols[2], y, { align: "right" }); doc.text("Total", W - mg, y, { align: "right" }); y += 8;
-    doc.setDrawColor(196, 30, 58); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 14;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(40, 40, 40);
-    order.items.forEach(it => { const p = pF(it.productId); doc.text(p?.name || it.productId, cols[0], y); doc.text(String(it.qty), cols[1], y, { align: "center" }); doc.text(fmt(p?.price), cols[2], y, { align: "right" }); doc.text(fmt((p?.price || 0) * it.qty), W - mg, y, { align: "right" }); y += 6; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.3); doc.line(mg, y, W - mg, y); y += 14; });
-    y += 4; doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5); doc.line(mg + cw * 0.5, y, W - mg, y); y += 16;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(60, 60, 60);
-    doc.text("Subtotal", mg + cw * 0.5, y); doc.text(fmt(sub), W - mg, y, { align: "right" }); y += 18;
-    if (disc > 0) { doc.setTextColor(27, 115, 64); doc.text(`Descuento (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y); doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" }); y += 18; }
-    doc.setDrawColor(196, 30, 58); doc.setLineWidth(2); doc.line(mg + cw * 0.5, y, W - mg, y); y += 20;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(196, 30, 58);
-    doc.text("TOTAL", mg + cw * 0.5, y); doc.text(fmt(order.total), W - mg, y, { align: "right" }); y += 14;
-    if (order.notes) { y += 10; doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text(`Notas: ${order.notes}`, mg, y); y += 14; }
-    y += 10; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 16;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.text("Formas de pago", mg, y); y += 14;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100, 100, 100);
-    ["Efectivo contra entrega", "Zelle: megapg.norcal@gmail.com", "Venmo: @MegaPG-NorCal", "Cheque a nombre de: Dulce Sabor LLC"].forEach(pm => { doc.text(`\u2022  ${pm}`, mg + 8, y); y += 13; });
-    y += 10; doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.5); doc.line(mg, y, W - mg, y); y += 14;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(160, 160, 160);
-    doc.text("\u00a1Gracias por tu compra!", W / 2, y, { align: "center" }); y += 12;
-    doc.text("https://dulcesaborca.com", W / 2, y, { align: "center" });
-    doc.setFillColor(196, 30, 58); doc.rect(0, doc.internal.pageSize.getHeight() - 6, W, 6, "F");
-    doc.save(`DulceSabor_${orderNum}_${order.date}.pdf`);
-  };
-
-  const printThermal = () => {
-    const items = order.items.map(it => { const p = pF(it.productId); return `<tr><td style="padding:2px 0">${p?.name || it.productId}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt((p?.price || 0) * it.qty * (1 - disc))}</td></tr>`; }).join("");
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>Print</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:monospace,sans-serif;width:72mm;font-size:12px;color:#000;padding:2mm}
-@page{size:80mm auto;margin:0}
-@media print{body{width:72mm;padding:2mm}}.hdr{text-align:center;border-bottom:2px dashed #000;padding-bottom:4px;margin-bottom:6px}
-.hdr h1{font-size:16px;font-weight:900;letter-spacing:1px}.hdr p{font-size:10px}
-.info{display:flex;justify-content:space-between;margin-bottom:6px;font-size:11px}
-table{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0}th{text-align:left;border-bottom:1px dashed #000;padding:2px 0;font-size:10px}
-td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;font-size:11px}
-.tot .line{display:flex;justify-content:space-between;padding:1px 0}
-.tot .grand{font-size:16px;font-weight:900;border-top:2px solid #000;margin-top:4px;padding-top:4px}
-.pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:10px}
-.ftr{text-align:center;border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px}
-</style></head><body>
-<div class="hdr"><h1>DULCE SABOR</h1><p>LLC</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
-<div class="info"><div><b>${cl?.name || ""}</b>${cl?.phone ? `<br>${cl.phone}` : ""}</div><div style="text-align:right"><b>#${orderNum}</b><br>${fmtD(order.date)}</div></div>
-<table><thead><tr><th>Producto</th><th style="text-align:center">Cant.</th><th style="text-align:right">Total</th></tr></thead><tbody>${items}</tbody></table>
-<div class="tot"><div class="line"><span>Subtotal</span><span>${fmt(sub)}</span></div>
-${disc > 0 ? `<div class="line"><span>Desc. ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
-<div class="line grand"><span>TOTAL</span><span>${fmt(order.total)}</span></div></div>
-<div class="pay"><b>Pago:</b> Efectivo &bull; Zelle &bull; Venmo &bull; Cheque</div>
-${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
-<div class="ftr">&iexcl;Gracias por su compra!<br>https://dulcesaborca.com</div>
-<script>window.onload=function(){window.print();}<\/script>
-</body></html>`;
-    const w = window.open("", "_blank", "width=320,height=600");
-    if (w) { w.document.write(html); w.document.close(); }
-  };
-
-  return <div>
-    <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-      <Btn primary onClick={printThermal} style={{ background: "#D35400" }}>🖨 Imprimir recibo</Btn>
-      <Btn primary onClick={downloadPDF}>Descargar PDF</Btn>
-      {cl?.phone && <WaBtn phone={cl.phone} msg={waReceipt(order, cl)} label="Enviar por WhatsApp" />}
-      {cl?.phone && order.status !== "paid" && <WaBtn phone={cl.phone} msg={waPayment(order, cl)} label="Recordatorio de pago" />}
-    </div>
-    <div style={{ maxWidth: 500, margin: "0 auto", background: "#fff", border: "1px solid #ddd", borderRadius: 8, padding: 24 }}>
-      <div style={{ textAlign: "center", borderBottom: "2px solid #C41E3A", paddingBottom: 12, marginBottom: 12 }}><div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>DULCE SABOR</div><div style={{ fontSize: 11, color: "#777" }}>Dulces Mexicanos Auténticos • Norte de California</div><div style={{ fontSize: 12, marginTop: 4 }}>José Flores • (707) 360-7420 • megapg.norcal@gmail.com</div></div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 12 }}><div><b>{cl?.name}</b>{cl?.address && <div style={{ color: "#777" }}>{cl.address}</div>}{cl?.phone && <div style={{ color: "#777" }}>{cl.phone}</div>}</div><div style={{ textAlign: "right" }}><b>#{order.id.slice(-6).toUpperCase()}</b><div style={{ color: "#777" }}>{fmtD(order.date)}</div><Badge text={order.status} color={ST_CLR[order.status]} /></div></div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 }}><thead><tr style={{ borderBottom: "2px solid #C41E3A" }}><th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>Producto</th><th style={{ textAlign: "center", color: "#C41E3A" }}>Cant.</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Precio</th><th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th></tr></thead><tbody>{order.items.map((it, i) => { const p = pF(it.productId); return <tr key={i} style={{ borderBottom: "1px solid #eee" }}><td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td><td style={{ textAlign: "center" }}>{it.qty}</td><td style={{ textAlign: "right" }}>{fmt(p?.price)}</td><td style={{ textAlign: "right" }}>{fmt((p?.price || 0) * it.qty)}</td></tr>; })}</tbody></table>
-      <div style={{ borderTop: "1px solid #ddd", paddingTop: 8, fontSize: 13 }}><div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}><span>Subtotal</span><span>{fmt(sub)}</span></div>{disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#1B7340" }}><span>Descuento ({cl?.tier} {Math.round(disc * 100)}%)</span><span>-{fmt(sub * disc)}</span></div>}<div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "2px solid #C41E3A", marginTop: 4, fontSize: 18, fontWeight: 900, color: "#C41E3A" }}><span>TOTAL</span><span>{fmt(order.total)}</span></div></div>
-      {order.notes && <div style={{ fontSize: 11, color: "#777", marginTop: 8, fontStyle: "italic" }}>Notas: {order.notes}</div>}
-      <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: "#999", borderTop: "1px solid #eee", paddingTop: 8 }}>¡Gracias! • https://dulcesaborca.com</div>
-    </div></div>;
 };
 
 // ===== MARKET INTELLIGENCE =====
