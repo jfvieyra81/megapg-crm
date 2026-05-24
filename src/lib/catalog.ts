@@ -3,18 +3,14 @@
 // Catálogo de productos y constantes de referencia compartidas.
 //
 // Hogar canónico de los tipos y datos del dominio "catálogo":
-//   - Product (movido desde App.tsx en Block 4.d)
-//   - InventoryItem (nuevo en Block 4.d)
+//   - Product (Block 4.d), InventoryItem (Block 4.d)
 //   - PRODUCTS, pF (catálogo Mega PG / Pigüi)
 //   - TIER_DISC (mapa ClientTier → descuento)
 //   - ST_CLR (mapa OrderStatus → color hex)
-//
-// Importado por: Orders.tsx, Receipt.tsx, App.tsx (Block 4.d). En futuros
-// bloques debería reemplazar duplicaciones inline en Inventory, Purchases,
-// Reports, WebOrders, Reorders, PostDelivery, Dashboard.
+//   - itemPrice, itemCost (helpers historical-aware, Block 4.g)
 // =============================================================================
 
-import type { ClientTier, OrderStatus } from "../types/domain";
+import type { ClientTier, OrderItem, OrderStatus } from "../types/domain";
 
 // ============================================================
 // Tipos del dominio "catálogo"
@@ -96,3 +92,17 @@ export const ST_CLR: Record<OrderStatus, string> = {
   delivered: "#1A5276",
   paid: "#1B7340",
 };
+
+// ============================================================
+// Item price/cost helpers historical-aware (Block 4.g)
+// ============================================================
+
+/** Precio unitario de un line item. Prefiere `priceAtSale` (preciso para
+ *  pedidos viejos cuyo catálogo cambió) y cae al precio actual del catálogo
+ *  como fallback para pedidos legacy sin snapshot. Devuelve 0 si nada disponible. */
+export const itemPrice = (it: OrderItem): number =>
+  it.priceAtSale ?? pF(it.productId)?.price ?? 0;
+
+/** Costo unitario de un line item. Mismo patrón de fallback que itemPrice. */
+export const itemCost = (it: OrderItem): number =>
+  it.costAtSale ?? pF(it.productId)?.cost ?? 0;

@@ -111,6 +111,14 @@ export interface ClientFormState {
 export interface OrderItem {
   productId: string;        // referencia a PRODUCTS[].id (catálogo Mega PG)
   qty: number;              // cajas; ≥ 1
+
+  /** Precio unitario (USD/caja) al momento de la venta. Opcional para backward
+   *  compat con pedidos legacy que no lo guardaban. Si undefined, fallback al
+   *  precio actual del catálogo (pF(productId).price). Agregado en Block 4.g. */
+  priceAtSale?: number;
+  /** Costo unitario (USD/caja) al momento de la venta. Mismo patrón de fallback.
+   *  Agregado en Block 4.g. */
+  costAtSale?: number;
 }
 
 export interface Order {

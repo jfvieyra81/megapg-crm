@@ -14,7 +14,7 @@
 import { useEffect, useState } from "react";
 import { jsPDF } from "jspdf";
 import type { Client, Language, Order } from "../types/domain";
-import { pF, ST_CLR } from "../lib/catalog";
+import { pF, ST_CLR, itemPrice } from "../lib/catalog";
 import { fmt, fmtD } from "../lib/format";
 import {
   STATUS_LABEL,
@@ -134,7 +134,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
 
   const disc = order.discount || 0;
   const sub = order.items.reduce(
-    (acc, it) => acc + (pF(it.productId)?.price || 0) * it.qty,
+    (acc, it) => acc + itemPrice(it) * it.qty,
     0
   );
   const orderNum = order.id.slice(-6).toUpperCase();
@@ -211,10 +211,11 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setTextColor(40, 40, 40);
     order.items.forEach(it => {
       const p = pF(it.productId);
+      const price = itemPrice(it);
       doc.text(p?.name || it.productId, cols[0], y);
       doc.text(String(it.qty), cols[1], y, { align: "center" });
-      doc.text(fmt(p?.price), cols[2], y, { align: "right" });
-      doc.text(fmt((p?.price || 0) * it.qty), W - mg, y, { align: "right" });
+      doc.text(fmt(price), cols[2], y, { align: "right" });
+      doc.text(fmt(price * it.qty), W - mg, y, { align: "right" });
       y += 6;
       doc.setDrawColor(230, 230, 230);
       doc.setLineWidth(0.3);
@@ -297,7 +298,8 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     const items = order.items
       .map(it => {
         const p = pF(it.productId);
-        return `<tr><td style="padding:2px 0">${p?.name || it.productId}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt((p?.price || 0) * it.qty * (1 - disc))}</td></tr>`;
+        const price = itemPrice(it);
+        return `<tr><td style="padding:2px 0">${p?.name || it.productId}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt(price * it.qty * (1 - disc))}</td></tr>`;
       })
       .join("");
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>Print</title>
@@ -482,13 +484,14 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
           <tbody>
             {order.items.map((it, i) => {
               const p = pF(it.productId);
+              const price = itemPrice(it);
               return (
                 <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td>
                   <td style={{ textAlign: "center" }}>{it.qty}</td>
-                  <td style={{ textAlign: "right" }}>{fmt(p?.price)}</td>
+                  <td style={{ textAlign: "right" }}>{fmt(price)}</td>
                   <td style={{ textAlign: "right" }}>
-                    {fmt((p?.price || 0) * it.qty)}
+                    {fmt(price * it.qty)}
                   </td>
                 </tr>
               );

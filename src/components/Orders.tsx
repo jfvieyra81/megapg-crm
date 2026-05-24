@@ -19,6 +19,7 @@ import {
   PRODUCTS,
   pF,
   TIER_DISC,
+  itemCost,
   type InventoryItem,
 } from "../lib/catalog";
 import { fmt, fmtD, uid } from "../lib/format";
@@ -147,7 +148,18 @@ export const Orders = ({
       setStockAck(true);
       return;
     }
-    const vi: OrderItem[] = form.items.filter(it => it.productId);
+    const vi: OrderItem[] = form.items
+      .filter(it => it.productId)
+      .map(it => {
+        const p = pF(it.productId);
+        return {
+          productId: it.productId,
+          qty: it.qty,
+          // Block 4.g: snapshot del precio y costo al momento de la venta
+          priceAtSale: p?.price ?? 0,
+          costAtSale: p?.cost ?? 0,
+        };
+      });
     const total = calcT();
     const order: Order = {
       id: uid(),
@@ -292,7 +304,7 @@ export const Orders = ({
           const c = clients.find(x => x.id === o.clientId);
           const tc = o.items.reduce((a, it) => a + it.qty, 0);
           const cost = o.items.reduce(
-            (a, it) => a + (pF(it.productId)?.cost || 0) * it.qty,
+            (a, it) => a + itemCost(it) * it.qty,
             0
           );
           const prof = (o.total || 0) - cost;
