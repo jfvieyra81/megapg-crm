@@ -115,7 +115,15 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     // Reset override al cambiar de pedido (nuevo cliente, nuevas preferencias)
     setOverrideLang(null);
   }, [order?.id]);
-  const lang: Language = overrideLang ?? cl?.language ?? "es";
+  // Block 4.f hotfix: validar lang contra valores válidos, no solo nullish.
+  // Algunos clientes legacy pueden tener language: "" u otro valor inválido.
+  const clientLang = cl?.language;
+  const lang: Language =
+    (overrideLang === "en" || overrideLang === "es")
+      ? overrideLang
+      : (clientLang === "en" || clientLang === "es")
+        ? clientLang
+        : "es";
   const s = STRINGS[lang];
 
   if (!order)

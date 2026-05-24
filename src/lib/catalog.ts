@@ -44,7 +44,7 @@ export interface InventoryItem {
 
 export const PRODUCTS: readonly Product[] = [
   // SLAPS LOLLIPOPS
-  { id: "slaps-mix", name: "Slaps Mix", sku: "DPG-SLPMIX-25", price: 40, cost: 22.00, bags: 25 },
+  { id: "slaps-mix", name: "Slaps Mix", sku: "DPG-SLPMIX-25", price: 50, cost: 22.00, bags: 25 },
   { id: "slaps-tam", name: "Slaps Tamarind", sku: "DPG-SLPTAM-25", price: 40, cost: 22.00, bags: 25 },
   { id: "slaps-mgo", name: "Slaps Mango", sku: "DPG-SLPMGO-25", price: 40, cost: 22.00, bags: 25 },
   { id: "slaps-wtm", name: "Slaps Watermelon", sku: "DPG-SLPWTM-25", price: 40, cost: 22.00, bags: 25 },
