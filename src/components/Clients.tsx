@@ -169,6 +169,7 @@ export const Clients: React.FC<ClientsProps> = ({
     permissionConfirmed: false,
     representativeId: "",
     priorHistoryBeforeRep: false,
+    language: "es"
   };
 
   const [sf, setSf] = useState<boolean>(false);
@@ -462,6 +463,24 @@ export const Clients: React.FC<ClientsProps> = ({
               onChange={v => setForm(p => ({ ...p, address: v }))}
               placeholder="1161 E Santa Clara St"
             />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>
+              Idioma para recibos / WhatsApp
+            </label>
+            <div style={{ display: "flex", gap: 12 }}>
+              {(["es", "en"] as const).map(opt => (
+                <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="client-language"
+                    checked={form.language === opt}
+                    onChange={() => setForm(p => ({ ...p, language: opt }))}
+                  />
+                  {opt === "es" ? "Español" : "English"}
+                </label>
+              ))}
+            </div>
           </div>
           <Inp
             label="Notes"

@@ -31,6 +31,10 @@ export type OrderStatus = "pending" | "delivered" | "paid";
 /** Origen de cliente o pedido. */
 export type Source = "web";
 
+/** Idioma preferido del cliente para recibos y mensajes WhatsApp.
+ *  Default cuando undefined: "es" (preserva comportamiento de clientes legacy). */
+export type Language = "en" | "es";
+
 // ============================================================
 // Cliente
 // ============================================================
@@ -64,6 +68,9 @@ export interface Client {
   /** Si true, el cliente tenía historia de compra antes de ser asignado al rep
    *  → nunca cuenta como "Cuenta Nueva" para fines de comisión 7%. */
   priorHistoryBeforeRep?: boolean;
+  /** Idioma preferido para recibos y mensajes WhatsApp.
+   *  undefined = fallback a "es" (clientes legacy). Agregado en Block 4.f. */
+  language?: Language;
 }
 
 // ============================================================
@@ -91,6 +98,9 @@ export interface ClientFormState {
   permissionConfirmed: boolean;
   representativeId: string;
   priorHistoryBeforeRep: boolean;
+  /** Idioma del cliente, requerido en el form. Default "es" en nuevos clientes.
+   *  Block 4.f. */
+  language: Language;
 }
 
 

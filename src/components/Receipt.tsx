@@ -1,91 +1,123 @@
 // src/components/Receipt.tsx
 // =============================================================================
-// Receipt — Vista de recibo individual con export a PDF (jsPDF) e impresión
-// térmica (window.open con HTML formateado para 80mm).
-// Extraído de App.tsx en Block 4.d. Comportamiento idéntico al original.
+// Receipt — Vista de recibo individual con i18n (Block 4.f).
 //
-// Helpers duplicados inline (cleanPhone, waLink, waReceipt, waPayment, WaBtn):
-// son copias temporales del original en App.tsx; se consolidarán en un
-// bloque futuro de limpieza de helpers de WhatsApp.
+// Idioma efectivo se deriva de:
+//   1. Override manual del toggle (estado local, se resetea al cambiar pedido)
+//   2. client.language (preferencia guardada del cliente)
+//   3. Default "es" (clientes legacy sin campo)
+//
+// Output localizado: vista on-screen, PDF (jsPDF), recibo térmico (HTML),
+// y mensajes WhatsApp (vía lib/whatsapp.tsx).
 // =============================================================================
 
+import { useEffect, useState } from "react";
 import { jsPDF } from "jspdf";
-import type { Client, Order, OrderStatus } from "../types/domain";
+import type { Client, Language, Order } from "../types/domain";
 import { pF, ST_CLR } from "../lib/catalog";
 import { fmt, fmtD } from "../lib/format";
+import {
+  STATUS_LABEL,
+  WaBtn,
+  statusUpper,
+  waPayment,
+  waReceipt,
+} from "../lib/whatsapp";
 import { Btn, Badge } from "./ui";
 
 // ============================================================
-// WhatsApp helpers (duplicados inline — consolidar en bloque futuro)
+// Tabla de strings localizadas
 // ============================================================
-const cleanPhone = (ph: string | undefined | null): string => {
-  if (!ph) return "";
-  return ph.replace(/[^0-9]/g, "").replace(/^1?(\d{10})$/, "1$1");
-};
 
-const waLink = (phone: string, msg: string): string =>
-  `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(msg)}`;
-
-const waReceipt = (order: Order, client: Client | undefined): string => {
-  const items = order.items
-    .map(it => {
-      const p = pF(it.productId);
-      return `${p?.name || it.productId} x${it.qty}`;
-    })
-    .join(", ");
-  return `*DULCE SABOR — Recibo #${order.id.slice(-6).toUpperCase()}*\nFecha: ${fmtD(order.date)}\nCliente: ${client?.name || ""}\nArtículos: ${items}\n${order.discount > 0 ? `Descuento: ${Math.round(order.discount * 100)}%\n` : ""}*Total: ${fmt(order.total)}*\nEstado: ${order.status.toUpperCase()}\n\n¡Gracias por tu compra!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
-};
-
-const waPayment = (order: Order, client: Client | undefined): string => {
-  return `Hola ${client?.contact || client?.name || ""},\n\nRecordatorio amistoso sobre tu pedido #${order.id.slice(-6).toUpperCase()} del ${fmtD(order.date)} por *${fmt(order.total)}*.\n\nEstado: ${order.status === "delivered" ? "Entregado — pago pendiente" : "Pendiente"}\n\nFormas de pago:\n• Efectivo en la próxima visita\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Cheque a nombre de Dulce Sabor LLC\n\n¿Preguntas? Llámame al (707) 360-7420\n\n¡Gracias!\n— José Flores, Dulce Sabor`;
-};
-
-interface WaBtnProps {
-  phone: string;
-  msg: string;
-  label?: string;
-  small?: boolean;
-}
-const WaBtn = ({ phone, msg, label, small }: WaBtnProps) => (
-  <a
-    href={waLink(phone, msg)}
-    target="_blank"
-    rel="noopener noreferrer"
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 4,
-      padding: small ? "3px 8px" : "6px 12px",
-      background: "#25D366",
-      color: "#fff",
-      borderRadius: 6,
-      fontSize: small ? 10 : 12,
-      fontWeight: 600,
-      textDecoration: "none",
-      cursor: "pointer",
-      whiteSpace: "nowrap",
-    }}
-  >
-    {label || "WhatsApp"}
-  </a>
-);
+const STRINGS = {
+  en: {
+    selectPrompt: "Select from Orders tab.",
+    tagline: "Authentic Mexican Candy • Northern California",
+    orderHash: "Order #",
+    thProduct: "Product",
+    thQty: "Qty",
+    thPrice: "Price",
+    thTotal: "Total",
+    subtotal: "Subtotal",
+    discount: "Discount",
+    totalCap: "TOTAL",
+    notes: "Notes:",
+    thankShort: "Thanks!",
+    thankLong: "Thank you for your business!",
+    paymentMethods: "Payment methods",
+    payCash: "Cash on delivery",
+    payZelle: "Zelle: megapg.norcal@gmail.com",
+    payVenmo: "Venmo: @MegaPG-NorCal",
+    payCheck: "Check payable to: Dulce Sabor LLC",
+    payShort: "Payment:",
+    payShortList: "Cash • Zelle • Venmo • Check",
+    btnPrint: "🖨 Print receipt",
+    btnPdf: "Download PDF",
+    btnWa: "Send via WhatsApp",
+    btnPayReminder: "Payment reminder",
+    langLabel: "Receipt language:",
+    langEs: "Español",
+    langEn: "English",
+  },
+  es: {
+    selectPrompt: "Selecciona desde Orders.",
+    tagline: "Dulces Mexicanos Auténticos • Norte de California",
+    orderHash: "Pedido #",
+    thProduct: "Producto",
+    thQty: "Cant.",
+    thPrice: "Precio",
+    thTotal: "Total",
+    subtotal: "Subtotal",
+    discount: "Descuento",
+    totalCap: "TOTAL",
+    notes: "Notas:",
+    thankShort: "¡Gracias!",
+    thankLong: "¡Gracias por tu compra!",
+    paymentMethods: "Formas de pago",
+    payCash: "Efectivo contra entrega",
+    payZelle: "Zelle: megapg.norcal@gmail.com",
+    payVenmo: "Venmo: @MegaPG-NorCal",
+    payCheck: "Cheque a nombre de: Dulce Sabor LLC",
+    payShort: "Pago:",
+    payShortList: "Efectivo • Zelle • Venmo • Cheque",
+    btnPrint: "🖨 Imprimir recibo",
+    btnPdf: "Descargar PDF",
+    btnWa: "Enviar por WhatsApp",
+    btnPayReminder: "Recordatorio de pago",
+    langLabel: "Idioma del recibo:",
+    langEs: "Español",
+    langEn: "English",
+  },
+} as const;
 
 // Status → RGB triple para el badge en el PDF.
-const PDF_STATUS_COLOR: Record<OrderStatus, [number, number, number]> = {
+const PDF_STATUS_COLOR = {
   pending: [211, 84, 0],
   delivered: [26, 82, 118],
   paid: [27, 115, 64],
-};
+} as const;
 
 // ============================================================
 // Component
 // ============================================================
+
 interface ReceiptProps {
   order: Order | null;
   clients: Client[];
 }
 
 export const Receipt = ({ order, clients }: ReceiptProps) => {
+  const cl = order ? clients.find(c => c.id === order.clientId) : undefined;
+
+  // Idioma: override manual > client.language > "es" default
+  const [overrideLang, setOverrideLang] = useState<Language | null>(null);
+  useEffect(() => {
+    // Reset override al cambiar de pedido (nuevo cliente, nuevas preferencias)
+    setOverrideLang(null);
+  }, [order?.id]);
+  const lang: Language = overrideLang ?? cl?.language ?? "es";
+  const s = STRINGS[lang];
+
   if (!order)
     return (
       <p
@@ -96,14 +128,13 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
           padding: 40,
         }}
       >
-        Select from Orders tab.
+        {s.selectPrompt}
       </p>
     );
 
-  const cl = clients.find(c => c.id === order.clientId);
   const disc = order.discount || 0;
   const sub = order.items.reduce(
-    (s, it) => s + (pF(it.productId)?.price || 0) * it.qty,
+    (acc, it) => acc + (pF(it.productId)?.price || 0) * it.qty,
     0
   );
   const orderNum = order.id.slice(-6).toUpperCase();
@@ -124,11 +155,16 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(120, 120, 120);
-    doc.text("Dulces Mexicanos Aut\u00e9nticos \u2022 Norte de California", W / 2, y, { align: "center" });
+    doc.text(s.tagline, W / 2, y, { align: "center" });
     y += 14;
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
-    doc.text("Jos\u00e9 Flores \u2022 (707) 360-7420 \u2022 megapg.norcal@gmail.com", W / 2, y, { align: "center" });
+    doc.text(
+      "Jos\u00e9 Flores \u2022 (707) 360-7420 \u2022 megapg.norcal@gmail.com",
+      W / 2,
+      y,
+      { align: "center" }
+    );
     y += 10;
     doc.setDrawColor(196, 30, 58);
     doc.setLineWidth(2);
@@ -138,7 +174,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFontSize(12);
     doc.setTextColor(30, 30, 30);
     doc.text(cl?.name || "\u2014", mg, y);
-    doc.text(`Pedido #${orderNum}`, W - mg, y, { align: "right" });
+    doc.text(`${s.orderHash}${orderNum}`, W - mg, y, { align: "right" });
     y += 15;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
@@ -151,7 +187,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFontSize(9);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(sc[0], sc[1], sc[2]);
-    doc.text(order.status.toUpperCase(), W - mg, y, { align: "right" });
+    doc.text(statusUpper(order.status, lang), W - mg, y, { align: "right" });
     y += (cl?.phone ? 14 : 8) + 10;
     doc.setDrawColor(196, 30, 58);
     doc.setLineWidth(2);
@@ -161,10 +197,10 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFontSize(10);
     doc.setTextColor(196, 30, 58);
     const cols = [mg, mg + cw * 0.5, mg + cw * 0.65, mg + cw * 0.82];
-    doc.text("Producto", cols[0], y);
-    doc.text("Cant.", cols[1], y, { align: "center" });
-    doc.text("Precio", cols[2], y, { align: "right" });
-    doc.text("Total", W - mg, y, { align: "right" });
+    doc.text(s.thProduct, cols[0], y);
+    doc.text(s.thQty, cols[1], y, { align: "center" });
+    doc.text(s.thPrice, cols[2], y, { align: "right" });
+    doc.text(s.thTotal, W - mg, y, { align: "right" });
     y += 8;
     doc.setDrawColor(196, 30, 58);
     doc.setLineWidth(0.5);
@@ -193,12 +229,16 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
     doc.setTextColor(60, 60, 60);
-    doc.text("Subtotal", mg + cw * 0.5, y);
+    doc.text(s.subtotal, mg + cw * 0.5, y);
     doc.text(fmt(sub), W - mg, y, { align: "right" });
     y += 18;
     if (disc > 0) {
       doc.setTextColor(27, 115, 64);
-      doc.text(`Descuento (${cl?.tier} ${Math.round(disc * 100)}%)`, mg + cw * 0.5, y);
+      doc.text(
+        `${s.discount} (${cl?.tier} ${Math.round(disc * 100)}%)`,
+        mg + cw * 0.5,
+        y
+      );
       doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" });
       y += 18;
     }
@@ -209,7 +249,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.setTextColor(196, 30, 58);
-    doc.text("TOTAL", mg + cw * 0.5, y);
+    doc.text(s.totalCap, mg + cw * 0.5, y);
     doc.text(fmt(order.total), W - mg, y, { align: "right" });
     y += 14;
     if (order.notes) {
@@ -217,7 +257,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
       doc.setFont("helvetica", "italic");
       doc.setFontSize(9);
       doc.setTextColor(120, 120, 120);
-      doc.text(`Notas: ${order.notes}`, mg, y);
+      doc.text(`${s.notes} ${order.notes}`, mg, y);
       y += 14;
     }
     y += 10;
@@ -228,17 +268,12 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(80, 80, 80);
-    doc.text("Formas de pago", mg, y);
+    doc.text(s.paymentMethods, mg, y);
     y += 14;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(100, 100, 100);
-    [
-      "Efectivo contra entrega",
-      "Zelle: megapg.norcal@gmail.com",
-      "Venmo: @MegaPG-NorCal",
-      "Cheque a nombre de: Dulce Sabor LLC",
-    ].forEach(pm => {
+    [s.payCash, s.payZelle, s.payVenmo, s.payCheck].forEach(pm => {
       doc.text(`\u2022  ${pm}`, mg + 8, y);
       y += 13;
     });
@@ -250,7 +285,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(160, 160, 160);
-    doc.text("\u00a1Gracias por tu compra!", W / 2, y, { align: "center" });
+    doc.text(s.thankLong, W / 2, y, { align: "center" });
     y += 12;
     doc.text("https://dulcesaborca.com", W / 2, y, { align: "center" });
     doc.setFillColor(196, 30, 58);
@@ -280,13 +315,13 @@ td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;
 </style></head><body>
 <div class="hdr"><h1>DULCE SABOR</h1><p>LLC</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
 <div class="info"><div><b>${cl?.name || ""}</b>${cl?.phone ? `<br>${cl.phone}` : ""}</div><div style="text-align:right"><b>#${orderNum}</b><br>${fmtD(order.date)}</div></div>
-<table><thead><tr><th>Producto</th><th style="text-align:center">Cant.</th><th style="text-align:right">Total</th></tr></thead><tbody>${items}</tbody></table>
-<div class="tot"><div class="line"><span>Subtotal</span><span>${fmt(sub)}</span></div>
-${disc > 0 ? `<div class="line"><span>Desc. ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
-<div class="line grand"><span>TOTAL</span><span>${fmt(order.total)}</span></div></div>
-<div class="pay"><b>Pago:</b> Efectivo &bull; Zelle &bull; Venmo &bull; Cheque</div>
+<table><thead><tr><th>${s.thProduct}</th><th style="text-align:center">${s.thQty}</th><th style="text-align:right">${s.thTotal}</th></tr></thead><tbody>${items}</tbody></table>
+<div class="tot"><div class="line"><span>${s.subtotal}</span><span>${fmt(sub)}</span></div>
+${disc > 0 ? `<div class="line"><span>${s.discount} ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
+<div class="line grand"><span>${s.totalCap}</span><span>${fmt(order.total)}</span></div></div>
+<div class="pay"><b>${s.payShort}</b> ${s.payShortList}</div>
 ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
-<div class="ftr">&iexcl;Gracias por su compra!<br>https://dulcesaborca.com</div>
+<div class="ftr">${s.thankLong}<br>https://dulcesaborca.com</div>
 <script>window.onload=function(){window.print();}<\/script>
 </body></html>`;
     const w = window.open("", "_blank", "width=320,height=600");
@@ -298,6 +333,45 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
 
   return (
     <div>
+      {/* Language toggle */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 12,
+          fontSize: 12,
+          color: "#555",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>{s.langLabel}</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {(["es", "en"] as const).map(opt => (
+            <button
+              key={opt}
+              onClick={() => setOverrideLang(opt)}
+              style={{
+                padding: "4px 12px",
+                border: `1px solid ${lang === opt ? "#1B7340" : "#ddd"}`,
+                borderRadius: 6,
+                background: lang === opt ? "#1B7340" : "#fff",
+                color: lang === opt ? "#fff" : "#666",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {opt === "es" ? s.langEs : s.langEn}
+            </button>
+          ))}
+        </div>
+        {cl?.language && cl.language !== lang && (
+          <span style={{ fontSize: 11, color: "#999", fontStyle: "italic" }}>
+            (override — client prefers {cl.language === "es" ? s.langEs : s.langEn})
+          </span>
+        )}
+      </div>
+
       <div
         style={{
           display: "flex",
@@ -308,23 +382,23 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
         }}
       >
         <Btn primary onClick={printThermal} style={{ background: "#D35400" }}>
-          🖨 Imprimir recibo
+          {s.btnPrint}
         </Btn>
         <Btn primary onClick={downloadPDF}>
-          Descargar PDF
+          {s.btnPdf}
         </Btn>
         {cl?.phone && (
           <WaBtn
             phone={cl.phone}
-            msg={waReceipt(order, cl)}
-            label="Enviar por WhatsApp"
+            msg={waReceipt(order, cl, lang)}
+            label={s.btnWa}
           />
         )}
         {cl?.phone && order.status !== "paid" && (
           <WaBtn
             phone={cl.phone}
-            msg={waPayment(order, cl)}
-            label="Recordatorio de pago"
+            msg={waPayment(order, cl, lang)}
+            label={s.btnPayReminder}
           />
         )}
       </div>
@@ -349,9 +423,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
           <div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>
             DULCE SABOR
           </div>
-          <div style={{ fontSize: 11, color: "#777" }}>
-            Dulces Mexicanos Auténticos • Norte de California
-          </div>
+          <div style={{ fontSize: 11, color: "#777" }}>{s.tagline}</div>
           <div style={{ fontSize: 12, marginTop: 4 }}>
             José Flores • (707) 360-7420 • megapg.norcal@gmail.com
           </div>
@@ -370,9 +442,15 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
             {cl?.phone && <div style={{ color: "#777" }}>{cl.phone}</div>}
           </div>
           <div style={{ textAlign: "right" }}>
-            <b>#{order.id.slice(-6).toUpperCase()}</b>
+            <b>
+              {s.orderHash}
+              {order.id.slice(-6).toUpperCase()}
+            </b>
             <div style={{ color: "#777" }}>{fmtD(order.date)}</div>
-            <Badge text={order.status} color={ST_CLR[order.status]} />
+            <Badge
+              text={STATUS_LABEL[lang][order.status]}
+              color={ST_CLR[order.status]}
+            />
           </div>
         </div>
         <table
@@ -385,12 +463,20 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
         >
           <thead>
             <tr style={{ borderBottom: "2px solid #C41E3A" }}>
-              <th style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}>
-                Producto
+              <th
+                style={{ textAlign: "left", padding: "6px 0", color: "#C41E3A" }}
+              >
+                {s.thProduct}
               </th>
-              <th style={{ textAlign: "center", color: "#C41E3A" }}>Cant.</th>
-              <th style={{ textAlign: "right", color: "#C41E3A" }}>Precio</th>
-              <th style={{ textAlign: "right", color: "#C41E3A" }}>Total</th>
+              <th style={{ textAlign: "center", color: "#C41E3A" }}>
+                {s.thQty}
+              </th>
+              <th style={{ textAlign: "right", color: "#C41E3A" }}>
+                {s.thPrice}
+              </th>
+              <th style={{ textAlign: "right", color: "#C41E3A" }}>
+                {s.thTotal}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -417,7 +503,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
               padding: "3px 0",
             }}
           >
-            <span>Subtotal</span>
+            <span>{s.subtotal}</span>
             <span>{fmt(sub)}</span>
           </div>
           {disc > 0 && (
@@ -430,7 +516,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
               }}
             >
               <span>
-                Descuento ({cl?.tier} {Math.round(disc * 100)}%)
+                {s.discount} ({cl?.tier} {Math.round(disc * 100)}%)
               </span>
               <span>-{fmt(sub * disc)}</span>
             </div>
@@ -447,7 +533,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
               color: "#C41E3A",
             }}
           >
-            <span>TOTAL</span>
+            <span>{s.totalCap}</span>
             <span>{fmt(order.total)}</span>
           </div>
         </div>
@@ -460,7 +546,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
               fontStyle: "italic",
             }}
           >
-            Notas: {order.notes}
+            {s.notes} {order.notes}
           </div>
         )}
         <div
@@ -473,7 +559,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
             paddingTop: 8,
           }}
         >
-          ¡Gracias! • https://dulcesaborca.com
+          {s.thankShort} • https://dulcesaborca.com
         </div>
       </div>
     </div>

@@ -1,11 +1,11 @@
 // src/components/Orders.tsx
 // =============================================================================
 // Orders — CRUD de pedidos + modal de devolución (§6.1 del contrato).
-// Extraído de App.tsx en Block 4.d. Comportamiento idéntico al original.
+// Extraído de App.tsx en Block 4.d.
 //
-// Helpers duplicados inline (cleanPhone, waLink, waOrder, waPayment, WaBtn):
-// son copias temporales del original en App.tsx; se consolidarán en un
-// bloque futuro de limpieza de helpers de WhatsApp.
+// Block 4.f: WhatsApp helpers ahora importados desde lib/whatsapp.tsx
+// (eliminada duplicación inline). Mensajes wa* respetan el idioma del
+// cliente (client.language) con fallback "es".
 // =============================================================================
 
 import { useState, useRef } from "react";
@@ -22,62 +22,8 @@ import {
   type InventoryItem,
 } from "../lib/catalog";
 import { fmt, fmtD, uid } from "../lib/format";
+import { WaBtn, waOrder, waPayment } from "../lib/whatsapp";
 import { Btn, Modal, Inp, Badge } from "./ui";
-
-// ============================================================
-// WhatsApp helpers (duplicados inline — consolidar en bloque futuro)
-// ============================================================
-const cleanPhone = (ph: string | undefined | null): string => {
-  if (!ph) return "";
-  return ph.replace(/[^0-9]/g, "").replace(/^1?(\d{10})$/, "1$1");
-};
-
-const waLink = (phone: string, msg: string): string =>
-  `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(msg)}`;
-
-const waOrder = (order: Order, client: Client | undefined): string => {
-  const items = order.items
-    .map(it => {
-      const p = pF(it.productId);
-      return `  • ${p?.name || it.productId} x${it.qty} = ${fmt((p?.price || 0) * it.qty * (1 - (order.discount || 0)))}`;
-    })
-    .join("\n");
-  return `*DULCE SABOR*\nPedido #${order.id.slice(-6).toUpperCase()}\nFecha: ${fmtD(order.date)}\n\nHola ${client?.contact || client?.name || ""},\n\nAquí está la confirmación de tu pedido:\n\n${items}\n${order.discount > 0 ? `\nDescuento: ${Math.round(order.discount * 100)}% (${client?.tier})\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nFormas de pago: Efectivo, Zelle, Venmo o Cheque\n¿Preguntas? Llámame al (707) 360-7420\n\nOrdena en línea: https://dulcesaborca.com\n\n¡Gracias!\n— José Flores, Dulce Sabor NorCal`;
-};
-
-const waPayment = (order: Order, client: Client | undefined): string => {
-  return `Hola ${client?.contact || client?.name || ""},\n\nRecordatorio amistoso sobre tu pedido #${order.id.slice(-6).toUpperCase()} del ${fmtD(order.date)} por *${fmt(order.total)}*.\n\nEstado: ${order.status === "delivered" ? "Entregado — pago pendiente" : "Pendiente"}\n\nFormas de pago:\n• Efectivo en la próxima visita\n• Zelle: megapg.norcal@gmail.com\n• Venmo: @MegaPG-NorCal\n• Cheque a nombre de Dulce Sabor LLC\n\n¿Preguntas? Llámame al (707) 360-7420\n\n¡Gracias!\n— José Flores, Dulce Sabor`;
-};
-
-interface WaBtnProps {
-  phone: string;
-  msg: string;
-  label?: string;
-  small?: boolean;
-}
-const WaBtn = ({ phone, msg, label, small }: WaBtnProps) => (
-  <a
-    href={waLink(phone, msg)}
-    target="_blank"
-    rel="noopener noreferrer"
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 4,
-      padding: small ? "3px 8px" : "6px 12px",
-      background: "#25D366",
-      color: "#fff",
-      borderRadius: 6,
-      fontSize: small ? 10 : 12,
-      fontWeight: 600,
-      textDecoration: "none",
-      cursor: "pointer",
-      whiteSpace: "nowrap",
-    }}
-  >
-    {label || "WhatsApp"}
-  </a>
-);
 
 // ============================================================
 // Tipos locales del formulario
@@ -168,14 +114,14 @@ export const Orders = ({
   const cl = clients.find(c => c.id === form.clientId);
   const disc = cl ? TIER_DISC[cl.tier] || 0 : 0;
   const calcT = (): number =>
-    form.items.reduce((s, it) => {
+    form.items.reduce((acc, it) => {
       const p = pF(it.productId);
-      return s + (p ? p.price * it.qty * (1 - disc) : 0);
+      return acc + (p ? p.price * it.qty * (1 - disc) : 0);
     }, 0);
   const calcC = (): number =>
-    form.items.reduce((s, it) => {
+    form.items.reduce((acc, it) => {
       const p = pF(it.productId);
-      return s + (p ? p.cost * it.qty : 0);
+      return acc + (p ? p.cost * it.qty : 0);
     }, 0);
 
   // FIX #5: Checar stock antes de guardar orden
@@ -233,7 +179,6 @@ export const Orders = ({
       const n = prev.map(o => {
         if (o.id !== id) return o;
         const updated: Order = { ...o, status: st };
-        // Deploy A: auto-populate paidDate when status transitions to paid; clear if moving away
         if (st === "paid" && !o.paidDate)
           updated.paidDate = new Date().toISOString().slice(0, 10);
         if (st !== "paid" && o.paidDate) updated.paidDate = null;
@@ -352,6 +297,7 @@ export const Orders = ({
           );
           const prof = (o.total || 0) - cost;
           const hasReturn = !!(o.returnedAmount && o.returnedAmount > 0);
+          const cLang = c?.language ?? "es";
           return (
             <div
               key={o.id}
@@ -413,7 +359,11 @@ export const Orders = ({
                 {c?.phone && (
                   <WaBtn
                     phone={c.phone}
-                    msg={o.status !== "paid" ? waPayment(o, c) : waOrder(o, c)}
+                    msg={
+                      o.status !== "paid"
+                        ? waPayment(o, c, cLang)
+                        : waOrder(o, c, cLang)
+                    }
                     label={o.status !== "paid" ? "Remind" : "WA"}
                     small
                   />
@@ -528,7 +478,6 @@ export const Orders = ({
             Items
           </label>
           {form.items.map((it, i) => {
-            // FIX #5: Mostrar stock disponible y warning visual
             const inv = it.productId
               ? inventory.find(x => x.productId === it.productId)
               : null;
