@@ -24,3 +24,10 @@ export const fmtD = (d: string | null | undefined): string => {
     return d as string;
   }
 };
+
+/** Format a discount fraction as a percentage string preserving precision.
+ *  Examples: 0.125 → "12.5", 0.0625 → "6.25", 0.03125 → "3.125", 0 → "0".
+ *  Avoids the misleading rounding of Math.round(disc * 100) which shows 13%
+ *  for actual 12.5%. Agregado en Block 4.h. */
+export const fmtPct = (disc: number): string =>
+  (+(disc * 100).toFixed(4)).toString();

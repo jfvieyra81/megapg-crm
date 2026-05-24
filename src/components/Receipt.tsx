@@ -15,7 +15,12 @@ import { useEffect, useState } from "react";
 import { jsPDF } from "jspdf";
 import type { Client, Language, Order } from "../types/domain";
 import { pF, ST_CLR, itemPrice } from "../lib/catalog";
-import { fmt, fmtD } from "../lib/format";
+import { fmt, fmtD, fmtPct } from "../lib/format";
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_LEGAL_NAME,
+  SELLER_PERMIT_NUMBER,
+} from "../lib/business-info";
 import {
   STATUS_LABEL,
   WaBtn,
@@ -109,14 +114,14 @@ interface ReceiptProps {
 export const Receipt = ({ order, clients }: ReceiptProps) => {
   const cl = order ? clients.find(c => c.id === order.clientId) : undefined;
 
-  // Idioma: override manual > client.language > "es" default
+  // Idioma: override manual > client.language > "es" default.
+  // Validación defensiva contra valores inválidos (clientes legacy con
+  // language: "" u otros valores no esperados). Block 4.f hotfix.
   const [overrideLang, setOverrideLang] = useState<Language | null>(null);
   useEffect(() => {
     // Reset override al cambiar de pedido (nuevo cliente, nuevas preferencias)
     setOverrideLang(null);
   }, [order?.id]);
-  // Block 4.f hotfix: validar lang contra valores válidos, no solo nullish.
-  // Algunos clientes legacy pueden tener language: "" u otro valor inválido.
   const clientLang = cl?.language;
   const lang: Language =
     (overrideLang === "en" || overrideLang === "es")
@@ -158,12 +163,15 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(22);
     doc.setTextColor(196, 30, 58);
-    doc.text("DULCE SABOR", W / 2, y, { align: "center" });
+    doc.text(BUSINESS_LEGAL_NAME.toUpperCase(), W / 2, y, { align: "center" });
     y += 18;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(120, 120, 120);
     doc.text(s.tagline, W / 2, y, { align: "center" });
+    y += 12;
+    // Block 4.h: business address (CDTFA / CA compliance)
+    doc.text(BUSINESS_ADDRESS, W / 2, y, { align: "center" });
     y += 14;
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
@@ -244,13 +252,20 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     if (disc > 0) {
       doc.setTextColor(27, 115, 64);
       doc.text(
-        `${s.discount} (${cl?.tier} ${Math.round(disc * 100)}%)`,
+        `${s.discount} (${cl?.tier} ${fmtPct(disc)}%)`,
         mg + cw * 0.5,
         y
       );
       doc.text(`-${fmt(sub * disc)}`, W - mg, y, { align: "right" });
       y += 18;
     }
+    // Block 4.h: explicit zero sales tax line for "for resale" B2B clarity
+    doc.setTextColor(120, 120, 120);
+    doc.setFontSize(10);
+    doc.text("Sales Tax (Sale for resale)", mg + cw * 0.5, y);
+    doc.text(fmt(0), W - mg, y, { align: "right" });
+    y += 16;
+    doc.setFontSize(11);
     doc.setDrawColor(196, 30, 58);
     doc.setLineWidth(2);
     doc.line(mg + cw * 0.5, y, W - mg, y);
@@ -291,6 +306,17 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     doc.setLineWidth(0.5);
     doc.line(mg, y, W - mg, y);
     y += 14;
+    // Block 4.h: Seller's Permit (CDTFA registration)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text(
+      `Seller's Permit: ${SELLER_PERMIT_NUMBER}`,
+      W / 2,
+      y,
+      { align: "center" }
+    );
+    y += 12;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(160, 160, 160);
@@ -323,15 +349,16 @@ td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;
 .pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:10px}
 .ftr{text-align:center;border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px}
 </style></head><body>
-<div class="hdr"><h1>DULCE SABOR</h1><p>LLC</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
+<div class="hdr"><h1>${BUSINESS_LEGAL_NAME.toUpperCase()}</h1><p>${BUSINESS_ADDRESS}</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
 <div class="info"><div><b>${cl?.name || ""}</b>${cl?.phone ? `<br>${cl.phone}` : ""}</div><div style="text-align:right"><b>#${orderNum}</b><br>${fmtD(order.date)}</div></div>
 <table><thead><tr><th>${s.thProduct}</th><th style="text-align:center">${s.thQty}</th><th style="text-align:right">${s.thTotal}</th></tr></thead><tbody>${items}</tbody></table>
 <div class="tot"><div class="line"><span>${s.subtotal}</span><span>${fmt(sub)}</span></div>
-${disc > 0 ? `<div class="line"><span>${s.discount} ${cl?.tier} ${Math.round(disc * 100)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
+${disc > 0 ? `<div class="line"><span>${s.discount} ${cl?.tier} ${fmtPct(disc)}%</span><span>-${fmt(sub * disc)}</span></div>` : ""}
+<div class="line" style="font-size:9px;color:#666"><span>Sales Tax (Sale for resale)</span><span>${fmt(0)}</span></div>
 <div class="line grand"><span>${s.totalCap}</span><span>${fmt(order.total)}</span></div></div>
 <div class="pay"><b>${s.payShort}</b> ${s.payShortList}</div>
 ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${order.notes}</div>` : ""}
-<div class="ftr">${s.thankLong}<br>https://dulcesaborca.com</div>
+<div class="ftr"><b>Seller's Permit: ${SELLER_PERMIT_NUMBER}</b><br>${s.thankLong}<br>https://dulcesaborca.com</div>
 <script>window.onload=function(){window.print();}<\/script>
 </body></html>`;
     const w = window.open("", "_blank", "width=320,height=600");
@@ -431,9 +458,10 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
           }}
         >
           <div style={{ fontSize: 20, fontWeight: 900, color: "#C41E3A" }}>
-            DULCE SABOR
+            {BUSINESS_LEGAL_NAME.toUpperCase()}
           </div>
           <div style={{ fontSize: 11, color: "#777" }}>{s.tagline}</div>
+          <div style={{ fontSize: 11, color: "#777" }}>{BUSINESS_ADDRESS}</div>
           <div style={{ fontSize: 12, marginTop: 4 }}>
             José Flores • (707) 360-7420 • megapg.norcal@gmail.com
           </div>
@@ -527,11 +555,24 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
               }}
             >
               <span>
-                {s.discount} ({cl?.tier} {Math.round(disc * 100)}%)
+                {s.discount} ({cl?.tier} {fmtPct(disc)}%)
               </span>
               <span>-{fmt(sub * disc)}</span>
             </div>
           )}
+          {/* Block 4.h: explicit zero sales tax line for "for resale" B2B clarity */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              padding: "3px 0",
+              color: "#888",
+              fontSize: 12,
+            }}
+          >
+            <span>Sales Tax (Sale for resale)</span>
+            <span>{fmt(0)}</span>
+          </div>
           <div
             style={{
               display: "flex",
@@ -570,6 +611,10 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
             paddingTop: 8,
           }}
         >
+          {/* Block 4.h: Seller's Permit (CDTFA) */}
+          <div style={{ fontWeight: 600, color: "#777", marginBottom: 4 }}>
+            Seller's Permit: {SELLER_PERMIT_NUMBER}
+          </div>
           {s.thankShort} • https://dulcesaborca.com
         </div>
       </div>

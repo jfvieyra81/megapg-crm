@@ -22,7 +22,7 @@ import {
   itemCost,
   type InventoryItem,
 } from "../lib/catalog";
-import { fmt, fmtD, uid } from "../lib/format";
+import { fmt, fmtD, fmtPct, uid } from "../lib/format";
 import { WaBtn, waOrder, waPayment } from "../lib/whatsapp";
 import { Btn, Modal, Inp, Badge } from "./ui";
 
@@ -330,7 +330,7 @@ export const Orders = ({
                 <span style={{ color: "#999" }}>{fmtD(o.date)}</span>{" "}
                 <span style={{ color: "#777" }}>{tc} cases</span>
                 {o.discount > 0 && (
-                  <Badge text={`-${Math.round(o.discount * 100)}%`} color="#D35400" />
+                  <Badge text={`-${fmtPct(o.discount)}%`} color="#D35400" />
                 )}
                 {hasReturn && (
                   <Badge text={`↩ -${fmt(o.returnedAmount)}`} color="#C41E3A" />
@@ -483,7 +483,7 @@ export const Orders = ({
               }}
             >
               {cl.name} — {cl.tier}{" "}
-              {disc > 0 ? `(${Math.round(disc * 100)}% off)` : "(list price)"}
+              {disc > 0 ? `(${fmtPct(disc)}% off)` : "(list price)"}
             </div>
           )}
           <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
