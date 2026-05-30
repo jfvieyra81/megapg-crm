@@ -43,7 +43,7 @@ import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
 import { Orders } from "./components/Orders";
-import { Receipt } from "./components/Receipt";
+import { LoginScreen, AccessDeniedScreen } from "./components/Auth";
 import { PRODUCTS, pF, TIER_DISC, ST_CLR } from "./lib/catalog";
 import type { InventoryItem } from "./lib/catalog";
 import { WaBtn, cleanPhone, waLink, waOrder, waPayment, waReceipt } from "./lib/whatsapp";
@@ -1080,78 +1080,6 @@ const WebOrders = ({ clients, setClients, orders, setOrders, inventory, setInven
   </div>;
 };
 
-// ============================================================
-// REPRESENTATIVES (Deploy A) — CRUD + estadísticas básicas
-// ============================================================
-// Representatives extraído a src/components/Representatives.tsx (Sesión 2 bloque 4)
-
-// ============================================================
-
-const LoginScreen = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState("");
-  const [step, setStep] = useState("idle"); // idle | sending | sent | error
-  const [error, setError] = useState(null);
-
-  const send = async () => {
-    if (!email || !email.includes("@")) { setError("Ingresa un email válido"); return; }
-    setStep("sending");
-    setError(null);
-    const r = await authSendMagicLink(email.trim().toLowerCase());
-    if (r.ok) setStep("sent");
-    else { setStep("error"); setError(r.error); }
-  };
-
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #FDF2E9 0%, #FEF9E7 100%)", padding: 20 }}>
-    <div style={{ maxWidth: 420, width: "100%", background: "#fff", borderRadius: 12, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-        <img src="/logo.png" alt="Dulce Sabor" style={{ height: 56, width: "auto" }} onError={e => { e.currentTarget.style.display = "none"; }} />
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#C41E3A" }}>Dulce Sabor CRM</div>
-          <div style={{ fontSize: 12, color: "#888" }}>v5.18 — Acceso protegido</div>
-        </div>
-      </div>
-
-      {step === "idle" && <>
-        <p style={{ fontSize: 13, color: "#555", lineHeight: 1.5, marginBottom: 18 }}>Ingresa tu email autorizado. Te enviaremos un enlace mágico para entrar (sin contraseña).</p>
-        <label style={{ fontSize: 11, fontWeight: 600, color: "#555", display: "block", marginBottom: 6 }}>Email</label>
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder="tu@email.com" autoFocus style={{ width: "100%", padding: "10px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, marginBottom: 14, boxSizing: "border-box" }} />
-        {error && <div style={{ fontSize: 12, color: "#C41E3A", marginBottom: 12 }}>{error}</div>}
-        <Btn primary onClick={send} style={{ width: "100%", padding: "10px 0" }}>Enviar enlace mágico</Btn>
-      </>}
-
-      {step === "sending" && <p style={{ fontSize: 13, color: "#555", textAlign: "center", padding: 20 }}>⏳ Enviando enlace a <b>{email}</b>...</p>}
-
-      {step === "sent" && <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>📨</div>
-        <p style={{ fontSize: 15, fontWeight: 700, color: "#1B7340", marginBottom: 8 }}>¡Enlace enviado!</p>
-        <p style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>Revisa tu inbox en <b>{email}</b>. Click el enlace y volverás aquí ya logueado. El enlace expira en ~1 hora.</p>
-        <p style={{ fontSize: 11, color: "#999", marginTop: 16 }}>¿No llegó? Revisa spam, o <button onClick={() => setStep("idle")} style={{ background: "none", border: "none", color: "#1A5276", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}>vuelve a intentar</button>.</p>
-      </div>}
-
-      {step === "error" && <div>
-        <div style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>⚠️</div>
-        <p style={{ fontSize: 13, color: "#C41E3A", textAlign: "center", marginBottom: 12 }}>Error: {error}</p>
-        <Btn onClick={() => { setStep("idle"); setError(null); }} style={{ width: "100%" }}>Volver a intentar</Btn>
-      </div>}
-
-      <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #eee", fontSize: 11, color: "#999", textAlign: "center" }}>
-        Solo emails autorizados pueden entrar. Si tu email no está en la lista, contacta al admin.
-      </div>
-    </div>
-  </div>;
-};
-
-const AccessDeniedScreen = ({ email, onLogout }) => {
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #FDF2F2 0%, #FEF9E7 100%)", padding: 20 }}>
-    <div style={{ maxWidth: 420, width: "100%", background: "#fff", borderRadius: 12, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)", textAlign: "center" }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>🚫</div>
-      <p style={{ fontSize: 17, fontWeight: 700, color: "#C41E3A", marginBottom: 8 }}>Acceso no autorizado</p>
-      <p style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>El email <b>{email}</b> está autenticado pero no está registrado en el CRM. Contacta al admin para que te dé acceso.</p>
-      <Btn onClick={onLogout} style={{ marginTop: 18 }}>Cerrar sesión</Btn>
-    </div>
-  </div>;
-};
-
 export default function App() {
   const saved = S.load();
   const defaultCampaign = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
@@ -1522,7 +1450,7 @@ export default function App() {
 
   // === D2 (v5.18): Auth gate ===
   if (authState === "checking") return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FDF2E9" }}><div style={{ fontSize: 14, color: "#888" }}>⏳ Verificando sesión...</div></div>;
-  if (authState === "loggedOut") return <LoginScreen />;
+  if (authState === "loggedOut") return <LoginScreen sendMagicLink={authSendMagicLink} />;
   if (authState === "denied") return <AccessDeniedScreen email={currentUser?.email} onLogout={handleLogout} />;
 
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px" }}>
