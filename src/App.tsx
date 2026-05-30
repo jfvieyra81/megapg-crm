@@ -43,6 +43,7 @@ import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
 import { Orders } from "./components/Orders";
+import { Receipt } from "./components/Receipt";
 import { Dashboard } from "./components/Dashboard";
 import { PostDelivery } from "./components/PostDelivery";
 import { LoginScreen, AccessDeniedScreen } from "./components/Auth";
