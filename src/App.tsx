@@ -44,6 +44,7 @@ import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
 import { Orders } from "./components/Orders";
 import { Dashboard } from "./components/Dashboard";
+import { PostDelivery } from "./components/PostDelivery";
 import { LoginScreen, AccessDeniedScreen } from "./components/Auth";
 import { PRODUCTS, pF, TIER_DISC, ST_CLR } from "./lib/catalog";
 import type { InventoryItem } from "./lib/catalog";
@@ -544,99 +545,6 @@ const Reorders = ({ clients, orders, reminders, setReminders, saveAll }) => {
         <div><b>{r.c.name}</b> <span style={{ color: "#999" }}>— enviado hace {r.dsReminder}d, reaparece en {REMINDER_COOLDOWN_DAYS - r.dsReminder}d</span></div>
         <Btn small onClick={() => resetCooldown(r.c.id)} style={{ fontSize: 10 }}>Reset</Btn>
       </div>)}
-    </>}
-  </div>;
-};
-
-// Phone normalization (keep digits only, prefix '1' for US 10-digit)
-const PostDelivery = ({ clients, orders, followups, setFollowups, saveAll }) => {
-  const [edits, setEdits] = useState({});
-  const [copied, setCopied] = useState(null);
-
-  // Build rows from delivered/paid orders within the follow-up window, excluding already-followed-up
-  const rows = orders
-    .filter(o => (o.status === "delivered" || o.status === "paid") && !followups[o.id])
-    .map(o => {
-      const daysSince = dSince(o.date);
-      if (daysSince < POSTDEL_MIN_DAYS || daysSince > POSTDEL_MAX_DAYS) return null;
-      const client = clients.find(c => c.id === o.clientId);
-      if (!client) return null;
-      // Find top product in this specific order (by qty)
-      const topItem = [...(o.items || [])].sort((a, b) => b.qty - a.qty)[0];
-      const topProd = topItem ? pF(topItem.productId)?.name : null;
-      const totalCases = (o.items || []).reduce((s, it) => s + Number(it.qty || 0), 0);
-      return { order: o, client, daysSince, topProd, totalCases };
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.daysSince - a.daysSince); // Most urgent (oldest delivery) first
-
-  const ready = rows.filter(r => r.daysSince < POSTDEL_URGENT_DAYS);
-  const urgent = rows.filter(r => r.daysSince >= POSTDEL_URGENT_DAYS);
-
-  const defaultMsg = (r) => {
-    const prodText = r.topProd || "tu pedido";
-    return `Hola ${r.client.contact || r.client.name},\n\nSoy José de Dulce Sabor. Pasé a saludar y ver cómo te va con el pedido del ${fmtD(r.order.date)} — ${prodText}.\n\n¿Cómo está saliendo? ¿La gente lo está aceptando bien? Me interesa saber qué tal va para poder ayudarte mejor.\n\nSi necesitas reorden, quieres probar algún producto nuevo, o tienes cualquier duda, avísame. También puedes ordenar en línea: https://dulcesaborca.com\n\nGracias por la confianza,\nJosé — (707) 360-7420`;
-  };
-
-  const getMsg = (r) => edits[r.order.id] ?? defaultMsg(r);
-
-  const copyMsg = async (r) => {
-    try {
-      await navigator.clipboard.writeText(getMsg(r));
-      setCopied(r.order.id);
-      setTimeout(() => setCopied(null), 2000);
-    } catch(e) { alert("Copy falló — selecciona el texto manualmente"); }
-  };
-
-  const markSent = (r) => {
-    const updated = { ...followups, [r.order.id]: { sentAt: new Date().toISOString(), clientId: r.client.id } };
-    setFollowups(updated);
-    saveAll("followups", updated);
-  };
-
-  const renderRow = (r) => {
-    const msg = getMsg(r);
-    const isUrgent = r.daysSince >= POSTDEL_URGENT_DAYS;
-    const borderColor = isUrgent ? "#C41E3A" : "#1A5276";
-    const badgeText = `Entregado hace ${r.daysSince}d`;
-    const badgeColor = isUrgent ? "#C41E3A" : "#1A5276";
-    return <div key={r.order.id} style={{ background: "#fff", border: "1px solid #eee", borderLeft: `4px solid ${borderColor}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>{r.client.name} <Badge text={r.client.tier} color={TIER_CLR[r.client.tier]} /></div>
-          <div style={{ fontSize: 11, color: "#777", marginTop: 3 }}>{r.client.contact || "—"} • {r.client.phone || "sin teléfono"} • {r.client.zone || "—"}</div>
-          <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>Pedido #{r.order.id.slice(-6).toUpperCase()} • <b>{fmtD(r.order.date)}</b> • {fmt(r.order.total)} • {r.totalCases} caja{r.totalCases !== 1 ? "s" : ""} • Estado: <b>{r.order.status}</b></div>
-        </div>
-        <Badge text={badgeText} color={badgeColor} />
-      </div>
-      <textarea value={msg} onChange={e => setEdits(p => ({ ...p, [r.order.id]: e.target.value }))} rows={7} style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
-      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-        <Btn small primary onClick={() => copyMsg(r)}>{copied === r.order.id ? "✓ Copiado" : "Copiar mensaje"}</Btn>
-        {r.client.phone && <WaBtn phone={r.client.phone} msg={msg} label="Abrir WhatsApp" small />}
-        <Btn small onClick={() => markSent(r)} style={{ background: "#1B7340", color: "#fff" }}>Marcar enviado</Btn>
-        {edits[r.order.id] !== undefined && <Btn small onClick={() => setEdits(p => { const n = { ...p }; delete n[r.order.id]; return n; })}>Reset texto</Btn>}
-      </div>
-    </div>;
-  };
-
-  return <div>
-    <div style={{ background: "#EBF5FB", borderRadius: 8, padding: "12px 16px", marginBottom: 16, borderLeft: "4px solid #1A5276" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A5276", marginBottom: 4 }}>Seguimiento post-entrega</div>
-      <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>Pedidos entregados hace entre {POSTDEL_MIN_DAYS} y {POSTDEL_MAX_DAYS} días que aún no tienen seguimiento. El objetivo es saber cómo va la venta del producto en la tienda. Una vez marcado como enviado, el pedido no vuelve a aparecer aquí. Después de {POSTDEL_MAX_DAYS} días, el módulo de recordatorios de reorden toma el relevo.</div>
-    </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
-      <Card title="Listos para seguir" value={ready.length} color="#1A5276" />
-      <Card title={`Última oportunidad (${POSTDEL_URGENT_DAYS}+d)`} value={urgent.length} color="#C41E3A" />
-      <Card title="Total pendientes" value={rows.length} color="#6C3483" />
-    </div>
-    {rows.length === 0 && <div style={{ padding: "32px", textAlign: "center", color: "#999", fontSize: 13, background: "#f8f8f8", borderRadius: 8 }}>No hay pedidos pendientes de seguimiento. 🎉</div>}
-    {urgent.length > 0 && <>
-      <ST>🔴 Última oportunidad ({urgent.length})</ST>
-      {urgent.map(r => renderRow(r))}
-    </>}
-    {ready.length > 0 && <>
-      <ST>🔵 Listos para seguimiento ({ready.length})</ST>
-      {ready.map(r => renderRow(r))}
     </>}
   </div>;
 };
