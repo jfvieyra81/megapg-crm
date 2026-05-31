@@ -159,7 +159,17 @@ const WELCOME_MAX_DAYS: number = 14;   // Window after first order to send welco
 // ─── Helpers puros ────────────────────────────────────────────────────────────
 const uid = (): string => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = (n: number | string | null | undefined): string => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-const fmtD = (d: string | number | Date): string => { try { return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return String(d); } };
+const fmtD = (d: string | number | Date): string => {
+  try {
+    // Las fechas date-only ("YYYY-MM-DD") se parsean como medianoche UTC y se
+    // corren un día atrás en zonas al oeste de UTC (p. ej. California). Parsearlas
+    // en hora local evita el corrimiento.
+    const date = typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)
+      ? new Date(d + "T00:00:00")
+      : new Date(d);
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch { return String(d); }
+};
 const dSince = (d: string | number | Date): number => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
 
 // ─── Facade de localStorage ───────────────────────────────────────────────────
