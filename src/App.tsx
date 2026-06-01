@@ -125,53 +125,23 @@ const SUPA_KEY: string | null = SUPABASE_KEY && SUPABASE_KEY !== "YOUR_ANON_KEY_
 const SUPA_HEADERS: Record<string, string> = { "Content-Type": "application/json", "apikey": SUPA_KEY as string, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
 const cloudEnabled: boolean = !!(SUPA_URL && SUPA_KEY);
 
-// ─── Catálogo de productos ────────────────────────────────────────────────────
-
-// ─── Enums de UI ──────────────────────────────────────────────────────────────
-const ZONES: readonly string[] = ["Santa Rosa / Sonoma", "Sacramento", "San Jose / Bay Area", "Mendocino / Ukiah", "Oakland / Bay Area", "Other"];
-const TIERS: readonly Tier[] = ["Lista", "Bronce", "Plata", "Oro"];
-const BRANDS: readonly Brand[] = ["Mega PG", "Pigüi USA", "Both", "Neither/Unknown"];
-const STORE_TYPES: readonly string[] = ["Dulcería", "Carnicería", "Supermercado", "Tienda/Market", "Convenience", "Other"];
-const INTEREST_LVL: readonly string[] = ["Very interested", "Somewhat interested", "Not interested", "Already a client"];
-const SUPPLIERS: readonly string[] = ["Pigüi USA (LA)", "Local distributor", "Travels to buy", "Online/Walmart/Amazon", "Unknown", "None (no Slaps)"];
-const PRODUCTS_SEEN: readonly string[] = ["Slaps Lollipops", "Slaps Devora/DevorAlien", "Cachetada/Cachetadas", "Cache Colors", "Slim Licks", "Bibi Licks", "Piguileta", "Mega Huevón", "Flamkiyos", "Mordidilla", "Don Cuco", "Other Pigüi", "None"];
-
-// ─── Tablas de lookup ─────────────────────────────────────────────────────────
-const TIER_CLR: Record<Tier, string> = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
-
 // ─── Umbrales operativos ──────────────────────────────────────────────────────
 const LOW: number = 5;
-// FIX #3: Constante única para umbral de seguimiento (antes: 14 en Dashboard, 21 en Clients)
-const FOLLOWUP_DAYS: number = 21;
 
 // REORDER REMINDER SETTINGS
 const REMINDER_COOLDOWN_DAYS: number = 7;
 const DEFAULT_REORDER_CYCLE: number = 30;
-const URGENT_OVERDUE_DAYS: number = 7;
 const ANTICIPATION_DAYS: number = 5;
 
 // POST-DELIVERY FOLLOW-UP SETTINGS
 const POSTDEL_MIN_DAYS: number = 3;    // Earliest: give client time to actually sell product
 const POSTDEL_MAX_DAYS: number = 21;   // Latest: after this, reorder reminder takes over
-const POSTDEL_URGENT_DAYS: number = 14; // "Last chance" threshold
 
 // WELCOME NEW CLIENT SETTINGS
 const WELCOME_MAX_DAYS: number = 14;   // Window after first order to send welcome
 
 // ─── Helpers puros ────────────────────────────────────────────────────────────
 const uid = (): string => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const fmt = (n: number | string | null | undefined): string => "$" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-const fmtD = (d: string | number | Date): string => {
-  try {
-    // Las fechas date-only ("YYYY-MM-DD") se parsean como medianoche UTC y se
-    // corren un día atrás en zonas al oeste de UTC (p. ej. California). Parsearlas
-    // en hora local evita el corrimiento.
-    const date = typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)
-      ? new Date(d + "T00:00:00")
-      : new Date(d);
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  } catch { return String(d); }
-};
 const dSince = (d: string | number | Date): number => { try { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); } catch { return 999; } };
 
 // ─── Facade de localStorage ───────────────────────────────────────────────────
@@ -435,15 +405,8 @@ const calcClientCycle = (clientOrders) => {
   return Math.max(7, Math.round(avg));
 };
 
-const Badge = ({ text, color }) => <span style={{ background: color + "22", color, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}>{text}</span>;
 const Btn = ({ children, onClick, primary, danger, small, disabled, style: s }) => <button disabled={disabled} onClick={onClick} style={{ padding: small ? "4px 10px" : "8px 16px", fontSize: small ? 12 : 13, fontWeight: 600, border: "none", borderRadius: 6, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1, background: danger ? "#C41E3A" : primary ? "#1B7340" : "#f0f0f0", color: primary || danger ? "#fff" : "#333", ...s }}>{children}</button>;
-const Card = ({ title, value, sub, color }) => <div style={{ background: "#f8f8f8", borderRadius: 8, padding: "12px 14px", borderLeft: `4px solid ${color || "#1B7340"}`, minWidth: 0 }}><div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>{title}</div><div style={{ fontSize: 20, fontWeight: 700, color: color || "#1B7340" }}>{value}</div>{sub && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{sub}</div>}</div>;
 const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 12, width: "92%", maxWidth: wide ? 800 : 600, maxHeight: "88vh", overflow: "auto", padding: "20px 24px" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><h3 style={{ fontSize: 18, fontWeight: 700, color: "#C41E3A" }}>{title}</h3><button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#999" }}>✕</button></div>{children}</div></div>;
-const Inp = ({ label, value, onChange, type, placeholder, style: s, options, textarea }) => <div style={{ marginBottom: 10, ...s }}>{label && <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 3 }}>{label}</label>}{options ? <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}><option value="">-- Select --</option>{options.map(o => <option key={o} value={o}>{o}</option>)}</select> : textarea ? <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={3} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, resize: "vertical" }} /> : <input type={type || "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />}</div>;
-const ST = ({ children }) => <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10, marginTop: 16, color: "#C41E3A", borderBottom: "2px solid #C41E3A", paddingBottom: 4 }}>{children}</h3>;
-
-// ===== MARKET INTELLIGENCE =====
-const BRAND_CLR = { "Mega PG": "#1B7340", "Pigüi USA": "#C41E3A", "Both": "#D35400", "Neither/Unknown": "#888" };
 
 export default function App() {
   const saved = S.load();
