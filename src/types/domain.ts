@@ -296,3 +296,26 @@ export interface Campaign {
   sentIds?: string[];        // ids de clientes ya marcados como enviados
   withPhoneOnly?: boolean;   // se interpreta como (!== false); default-true
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pedidos web (Block 4.h) — shape crudo de la tabla Supabase `web_orders`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WebOrderItem {
+  productId: string;
+  qty: number;
+  webLabel?: string;        // etiqueta original del sitio si no matchea catálogo
+}
+
+export interface WebOrder {
+  id: string;
+  status: string;           // "pending" | "imported" | "ignored" (valor crudo)
+  total?: number;
+  negocio?: string;
+  encargado?: string;
+  phone?: string;
+  direccion?: string;
+  pago?: string;
+  created_at?: string;      // ISO datetime
+  items?: WebOrderItem[];
+}
