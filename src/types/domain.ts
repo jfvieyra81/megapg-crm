@@ -276,3 +276,23 @@ export interface Commission {
   phase2ActiveDuringMonth: boolean;
   tailDuringMonth: boolean;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anuncios masivos (Block 4.g) — entidades persistidas vía saveAll.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Plantilla de mensaje reutilizable para anuncios masivos. */
+export interface Template {
+  id: string;
+  name: string;
+  body: string;
+  createdAt: string;   // ISO datetime
+}
+
+/** Estado persistido de la campaña de anuncios en curso (paso compose/send). */
+export interface Campaign {
+  tiers?: ClientTier[];
+  message?: string;
+  sentIds?: string[];        // ids de clientes ya marcados como enviados
+  withPhoneOnly?: boolean;   // se interpreta como (!== false); default-true
+}
