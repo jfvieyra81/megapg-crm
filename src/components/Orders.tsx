@@ -14,12 +14,17 @@ import type {
   Order,
   OrderItem,
   OrderStatus,
+  SaleUnit,
 } from "../types/domain";
 import {
   PRODUCTS,
   pF,
   TIER_DISC,
   itemCost,
+  bagEnabled,
+  unitPrice,
+  unitCost,
+  casesFor,
   type InventoryItem,
 } from "../lib/catalog";
 import { fmt, fmtD, fmtPct, uid } from "../lib/format";
@@ -32,6 +37,7 @@ import { Btn, Modal, Inp, Badge } from "./ui";
 interface OrderFormItem {
   productId: string;
   qty: number;
+  unit: SaleUnit;
 }
 
 interface OrderForm {
@@ -65,7 +71,7 @@ interface OrdersProps {
 const buildEmptyForm = (): OrderForm => ({
   clientId: "",
   date: new Date().toISOString().slice(0, 10),
-  items: [{ productId: "", qty: 1 }],
+  items: [{ productId: "", qty: 1, unit: "case" }],
   notes: "",
   status: "pending",
 });
@@ -99,16 +105,26 @@ export const Orders = ({
     setSf(true);
   };
   const addL = () =>
-    setForm(p => ({ ...p, items: [...p.items, { productId: "", qty: 1 }] }));
+    setForm(p => ({ ...p, items: [...p.items, { productId: "", qty: 1, unit: "case" }] }));
   const remL = (i: number) =>
     setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
-  const upL = (i: number, f: "productId" | "qty", v: string) =>
+  const upL = (i: number, f: "productId" | "qty" | "unit", v: string) =>
     setForm(p => {
       const items = [...p.items];
-      items[i] = {
-        ...items[i],
-        [f]: f === "qty" ? Math.max(1, parseInt(v) || 1) : v,
-      };
+      const cur = items[i];
+      if (f === "qty") {
+        items[i] = { ...cur, qty: Math.max(1, parseInt(v) || 1) };
+      } else if (f === "unit") {
+        items[i] = { ...cur, unit: v === "bag" ? "bag" : "case" };
+      } else {
+        // Al cambiar de producto, si el nuevo no se vende por bolsa, regresa a caja.
+        const np = pF(v);
+        items[i] = {
+          ...cur,
+          productId: v,
+          unit: cur.unit === "bag" && bagEnabled(np) ? "bag" : "case",
+        };
+      }
       return { ...p, items };
     });
 
@@ -117,12 +133,12 @@ export const Orders = ({
   const calcT = (): number =>
     form.items.reduce((acc, it) => {
       const p = pF(it.productId);
-      return acc + (p ? p.price * it.qty * (1 - disc) : 0);
+      return acc + (p ? unitPrice(p, it.unit) * it.qty * (1 - disc) : 0);
     }, 0);
   const calcC = (): number =>
     form.items.reduce((acc, it) => {
       const p = pF(it.productId);
-      return acc + (p ? p.cost * it.qty : 0);
+      return acc + (p ? unitCost(p, it.unit) * it.qty : 0);
     }, 0);
 
   // FIX #5: Checar stock antes de guardar orden
@@ -131,11 +147,16 @@ export const Orders = ({
     form.items
       .filter(it => it.productId)
       .forEach(it => {
+        const p = pF(it.productId);
         const inv = inventory.find(i => i.productId === it.productId);
-        const avail = inv?.stock || 0;
-        if (it.qty > avail) {
-          const p = pF(it.productId);
-          warnings.push(`${p?.name}: requesting ${it.qty}, only ${avail} in stock`);
+        const availCases = inv?.stock || 0;
+        if (casesFor(p, it.unit, it.qty) > availCases) {
+          const unitWord = it.unit === "bag" ? "bag(s)" : "case(s)";
+          const availInUnit =
+            it.unit === "bag" ? Math.floor(availCases * (p?.bags || 1)) : availCases;
+          warnings.push(
+            `${p?.name}: requesting ${it.qty} ${unitWord}, only ${availInUnit} in stock`
+          );
         }
       });
     return warnings;
@@ -155,9 +176,11 @@ export const Orders = ({
         return {
           productId: it.productId,
           qty: it.qty,
-          // Block 4.g: snapshot del precio y costo al momento de la venta
-          priceAtSale: p?.price ?? 0,
-          costAtSale: p?.cost ?? 0,
+          unit: it.unit,
+          // Block 4.g: snapshot del precio y costo al momento de la venta.
+          // Bolsa: precio = bagPrice, costo = costo de caja / bolsas.
+          priceAtSale: unitPrice(p, it.unit),
+          costAtSale: unitCost(p, it.unit),
         };
       });
     const total = calcT();
@@ -172,8 +195,11 @@ export const Orders = ({
     const ni: InventoryItem[] = [...inventory];
     vi.forEach(it => {
       const idx = ni.findIndex(inv => inv.productId === it.productId);
-      if (idx >= 0)
-        ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - it.qty) };
+      if (idx >= 0) {
+        // Una bolsa descuenta una fracción de caja (qty / bags).
+        const used = casesFor(pF(it.productId), it.unit ?? "case", it.qty);
+        ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - used) };
+      }
     });
     setOrders(prev => {
       const n = [...prev, order];
@@ -225,7 +251,11 @@ export const Orders = ({
     setForm({
       clientId: o.clientId,
       date: new Date().toISOString().slice(0, 10),
-      items: o.items.map(it => ({ productId: it.productId, qty: it.qty })),
+      items: o.items.map(it => ({
+        productId: it.productId,
+        qty: it.qty,
+        unit: it.unit ?? "case",
+      })),
       notes: "Reorder from " + fmtD(o.date),
       status: "pending",
     });
@@ -490,11 +520,19 @@ export const Orders = ({
             Items
           </label>
           {form.items.map((it, i) => {
+            const prod = it.productId ? pF(it.productId) : undefined;
             const inv = it.productId
               ? inventory.find(x => x.productId === it.productId)
               : null;
-            const avail = inv?.stock || 0;
-            const overStock = !!(it.productId && it.qty > avail);
+            const availCases = inv?.stock || 0;
+            const canBag = bagEnabled(prod);
+            const availInUnit =
+              it.unit === "bag"
+                ? Math.floor(availCases * (prod?.bags || 1))
+                : availCases;
+            const overStock = !!(
+              it.productId && casesFor(prod, it.unit, it.qty) > availCases
+            );
             return (
               <div
                 key={i}
@@ -516,7 +554,9 @@ export const Orders = ({
                     const pInv = inventory.find(x => x.productId === p.id);
                     return (
                       <option key={p.id} value={p.id}>
-                        {p.name} ({fmt(p.price)}) — {pInv?.stock || 0} avail
+                        {p.name} ({fmt(p.price)}
+                        {bagEnabled(p) ? ` / ${fmt(p.bagPrice)} bolsa` : ""}) —{" "}
+                        {pInv?.stock || 0} avail
                       </option>
                     );
                   })}
@@ -536,6 +576,26 @@ export const Orders = ({
                     background: overStock ? "#FDE8E8" : "#fff",
                   }}
                 />
+                <select
+                  value={it.unit}
+                  onChange={e => upL(i, "unit", e.target.value)}
+                  disabled={!it.productId}
+                  title={
+                    canBag
+                      ? "Unidad de venta"
+                      : "Este producto solo se vende por caja"
+                  }
+                  style={{
+                    padding: "7px",
+                    border: "1px solid #ddd",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    background: "#fff",
+                  }}
+                >
+                  <option value="case">Caja</option>
+                  {canBag && <option value="bag">Bolsa</option>}
+                </select>
                 <span
                   style={{
                     fontSize: 12,
@@ -545,7 +605,7 @@ export const Orders = ({
                   }}
                 >
                   {it.productId
-                    ? fmt((pF(it.productId)?.price || 0) * it.qty * (1 - disc))
+                    ? fmt(unitPrice(prod, it.unit) * it.qty * (1 - disc))
                     : ""}
                 </span>
                 {overStock && (
@@ -557,7 +617,7 @@ export const Orders = ({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    only {avail}!
+                    only {availInUnit}!
                   </span>
                 )}
                 {form.items.length > 1 && (

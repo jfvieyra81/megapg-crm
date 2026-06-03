@@ -16,6 +16,7 @@
 import { useState } from "react";
 import { Badge, Btn, Card, Modal, Inp, ST } from "./ui";
 import { fmt, fmtD, uid } from "../lib/format";
+import { itemCost, itemPrice, wholeCases, looseBags } from "../lib/catalog";
 import type { Order } from "../types/domain";
 
 // ─── Local types (will move to domain.ts in a future block) ──────────
@@ -155,7 +156,13 @@ export const Inventory = ({
                   textAlign: "right",
                 }}
               >
-                {st}
+                {wholeCases(st)}
+                {looseBags(st, p.bags) > 0 && (
+                  <span style={{ fontSize: 10, color: "#999", fontWeight: 600 }}>
+                    {" "}
+                    +{looseBags(st, p.bags)}b
+                  </span>
+                )}
               </span>
               {(out || low) && <Badge text={out ? "OUT" : "LOW"} color={out ? "#C41E3A" : "#D35400"} />}
             </div>
@@ -380,38 +387,37 @@ export const Reports = ({
   products,
   calcWeeks,
 }: ReportsProps) => {
-  const pF = (id: string): Product | undefined => products.find(p => p.id === id);
   const weeks = calcWeeks(orders);
   const md: Record<string, { rev: number; cost: number; cases: number; orders: number }> = {};
   orders.forEach(o => {
     const m = o.date?.slice(0, 7) || "?";
     if (!md[m]) md[m] = { rev: 0, cost: 0, cases: 0, orders: 0 };
     md[m].rev += o.total || 0;
-    md[m].cost += o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0);
+    md[m].cost += o.items.reduce((a, it) => a + itemCost(it) * it.qty, 0);
     md[m].cases += o.items.reduce((a, it) => a + it.qty, 0);
     md[m].orders++;
   });
   const ps = products
     .map(p => {
-      const sold = orders.reduce(
-        (s, o) =>
-          s + o.items.filter(it => it.productId === p.id).reduce((a, it) => a + it.qty, 0),
-        0
-      );
-      const rev = orders.reduce(
-        (s, o) =>
-          s +
-          o.items
-            .filter(it => it.productId === p.id)
-            .reduce((a, it) => a + p.price * (1 - (o.discount || 0)) * it.qty, 0),
-        0
-      );
-      return { ...p, sold, rev, prof: rev - p.cost * sold };
+      let sold = 0;
+      let rev = 0;
+      let cost = 0;
+      orders.forEach(o => {
+        o.items
+          .filter(it => it.productId === p.id)
+          .forEach(it => {
+            sold += it.qty;
+            // itemPrice/itemCost respetan el snapshot por unidad (caja o bolsa).
+            rev += itemPrice(it) * (1 - (o.discount || 0)) * it.qty;
+            cost += itemCost(it) * it.qty;
+          });
+      });
+      return { ...p, sold, rev, prof: rev - cost };
     })
     .sort((a, b) => b.sold - a.sold);
   const tR = orders.reduce((s, o) => s + (o.total || 0), 0);
   const tC = orders.reduce(
-    (s, o) => s + o.items.reduce((a, it) => a + (pF(it.productId)?.cost || 0) * it.qty, 0),
+    (s, o) => s + o.items.reduce((a, it) => a + itemCost(it) * it.qty, 0),
     0
   );
 

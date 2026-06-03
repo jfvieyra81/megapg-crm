@@ -95,6 +95,10 @@ const STRINGS = {
   },
 } as const;
 
+/** Sufijo de unidad para el nombre del producto en el recibo (solo bolsa). */
+const unitTag = (unit: string | undefined, lang: Language): string =>
+  unit === "bag" ? (lang === "es" ? " · bolsa" : " · bag") : "";
+
 // Status → RGB triple para el badge en el PDF.
 const PDF_STATUS_COLOR = {
   pending: [211, 84, 0],
@@ -228,7 +232,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
     order.items.forEach(it => {
       const p = pF(it.productId);
       const price = itemPrice(it);
-      doc.text(p?.name || it.productId, cols[0], y);
+      doc.text((p?.name || it.productId) + unitTag(it.unit, lang), cols[0], y);
       doc.text(String(it.qty), cols[1], y, { align: "center" });
       doc.text(fmt(price), cols[2], y, { align: "right" });
       doc.text(fmt(price * it.qty), W - mg, y, { align: "right" });
@@ -333,7 +337,7 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
       .map(it => {
         const p = pF(it.productId);
         const price = itemPrice(it);
-        return `<tr><td style="padding:2px 0">${p?.name || it.productId}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt(price * it.qty * (1 - disc))}</td></tr>`;
+        return `<tr><td style="padding:2px 0">${p?.name || it.productId}${unitTag(it.unit, lang)}</td><td style="text-align:center">${it.qty}</td><td style="text-align:right">${fmt(price * it.qty * (1 - disc))}</td></tr>`;
       })
       .join("");
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>Print</title>
@@ -523,7 +527,7 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
               const price = itemPrice(it);
               return (
                 <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "6px 0" }}>{p?.name || it.productId}</td>
+                  <td style={{ padding: "6px 0" }}>{(p?.name || it.productId) + unitTag(it.unit, lang)}</td>
                   <td style={{ textAlign: "center" }}>{it.qty}</td>
                   <td style={{ textAlign: "right" }}>{fmt(price)}</td>
                   <td style={{ textAlign: "right" }}>

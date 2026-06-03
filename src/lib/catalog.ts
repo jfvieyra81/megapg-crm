@@ -10,7 +10,7 @@
 //   - itemPrice, itemCost (helpers historical-aware, Block 4.g)
 // =============================================================================
 
-import type { ClientTier, OrderItem, OrderStatus } from "../types/domain";
+import type { ClientTier, OrderItem, OrderStatus, SaleUnit } from "../types/domain";
 
 // ============================================================
 // Tipos del dominio "catálogo"
@@ -27,6 +27,10 @@ export type Product = {
   readonly cost: number;
   /** Bolsas / displays por caja. */
   readonly bags: number;
+  /** Precio de venta por bolsa suelta (USD). Opcional: solo se define en
+   *  productos que se venden sueltos. Si está ausente o ≤ 0, el producto NO
+   *  ofrece la opción "bolsa" en el formulario de pedidos. */
+  readonly bagPrice?: number;
 };
 
 /** Estado de inventario por producto. */
@@ -44,13 +48,13 @@ export interface InventoryItem {
 
 export const PRODUCTS: readonly Product[] = [
   // SLAPS LOLLIPOPS
-  { id: "slaps-mix", name: "Slaps Mix", sku: "DPG-SLPMIX-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-tam", name: "Slaps Tamarind", sku: "DPG-SLPTAM-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-mgo", name: "Slaps Mango", sku: "DPG-SLPMGO-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-wtm", name: "Slaps Watermelon", sku: "DPG-SLPWTM-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-app", name: "Slaps Green Apple", sku: "DPG-SLPAPP-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-dbx", name: "Slaps DobleX", sku: "DPG-DBXPIC-25", price: 40, cost: 22.00, bags: 25 },
-  { id: "slaps-pkl", name: "Slaps Pickle", sku: "DPG-SLPPIK-25", price: 40, cost: 22.00, bags: 25 },
+  { id: "slaps-mix", name: "Slaps Mix", sku: "DPG-SLPMIX-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
+  { id: "slaps-tam", name: "Slaps Tamarind", sku: "DPG-SLPTAM-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
+  { id: "slaps-mgo", name: "Slaps Mango", sku: "DPG-SLPMGO-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
+  { id: "slaps-wtm", name: "Slaps Watermelon", sku: "DPG-SLPWTM-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
+  { id: "slaps-app", name: "Slaps Green Apple", sku: "DPG-SLPAPP-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
+  { id: "slaps-dbx", name: "Slaps DobleX", sku: "DPG-DBXPIC-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
+  { id: "slaps-pkl", name: "Slaps Pickle", sku: "DPG-SLPPIK-25", price: 40, cost: 22.00, bags: 25, bagPrice: 1.60 },
   { id: "slaps-dev", name: "Slaps Devora", sku: "DPG-SLPDEV-40", price: 80, cost: 50.00, bags: 40 },
   { id: "slaps-aln", name: "Slaps DevorAlien", sku: "DPG-SLPALN-40", price: 80, cost: 50.00, bags: 40 },
   // CACHETADA
@@ -58,11 +62,11 @@ export const PRODUCTS: readonly Product[] = [
   // SOFT CANDIES
   { id: "piguileta", name: "Piguileta Fuego", sku: "DPG-PGFUEG-16", price: 85, cost: 57.60, bags: 16 },
   { id: "piguileta-c", name: "Piguileta Cool", sku: "DPG-PGCOOL-16", price: 85, cost: 57.60, bags: 16 },
-  { id: "mega-hue-d", name: "Mega Huevón Display", sku: "DPG-MGAHUE-30", price: 84, cost: 51.20, bags: 16 },
-  { id: "mega-hue-b", name: "Mega Huevón Bolsa", sku: "DPG-MGAHUE-10", price: 105, cost: 62.00, bags: 10 },
+  { id: "mega-hue-d", name: "Mega Huevón Display", sku: "DPG-MGAHUE-30", price: 84, cost: 51.20, bags: 16, bagPrice: 5.25 },
+  { id: "mega-hue-b", name: "Mega Huevón Bolsa", sku: "DPG-MGAHUE-10", price: 105, cost: 62.00, bags: 10, bagPrice: 10.50 },
   { id: "don-cuco", name: "Bolas Don Cuco", sku: "DPG-DONCUC-12", price: 115, cost: 76.80, bags: 12 },
-  { id: "mordidilla", name: "Mordidilla", sku: "DPG-MORDCH-12", price: 60, cost: 35.40, bags: 12 },
-  { id: "flamkiyos", name: "Flamkiyos", sku: "DPG-FLAMKI-10", price: 93, cost: 55.20, bags: 12 },
+  { id: "mordidilla", name: "Mordidilla", sku: "DPG-MORDCH-12", price: 60, cost: 35.40, bags: 12, bagPrice: 5.00 },
+  { id: "flamkiyos", name: "Flamkiyos", sku: "DPG-FLAMKI-10", price: 93, cost: 55.20, bags: 12, bagPrice: 7.75 },
   // CANDY POWDER
   { id: "cache-chm", name: "Cache Colors Chamoy Lg", sku: "DPG-CLRCHM-12", price: 115, cost: 76.80, bags: 12 },
   { id: "cache-mix", name: "Cache Colors Assorted Lg", sku: "DPG-CLRMIX-12", price: 115, cost: 76.80, bags: 12 },
@@ -106,3 +110,34 @@ export const itemPrice = (it: OrderItem): number =>
 /** Costo unitario de un line item. Mismo patrón de fallback que itemPrice. */
 export const itemCost = (it: OrderItem): number =>
   it.costAtSale ?? pF(it.productId)?.cost ?? 0;
+
+// ============================================================
+// Helpers de unidad de venta (caja vs bolsa)
+// ============================================================
+
+/** ¿El producto se puede vender por bolsa suelta? (tiene bagPrice > 0). */
+export const bagEnabled = (p: Product | undefined): boolean =>
+  !!p && typeof p.bagPrice === "number" && p.bagPrice > 0;
+
+/** Precio unitario de catálogo según la unidad (pre-descuento). Lo usa el
+ *  formulario de pedidos antes de congelar el snapshot. */
+export const unitPrice = (p: Product | undefined, unit: SaleUnit): number =>
+  !p ? 0 : unit === "bag" ? (p.bagPrice ?? 0) : p.price;
+
+/** Costo unitario de catálogo según la unidad. Para "bag" prorratea el costo
+ *  de la caja entre las bolsas (cost / bags). */
+export const unitCost = (p: Product | undefined, unit: SaleUnit): number =>
+  !p ? 0 : unit === "bag" ? p.cost / (p.bags || 1) : p.cost;
+
+/** Cajas consumidas del inventario por una línea. Una bolsa descuenta una
+ *  fracción de caja (qty / bags); una caja descuenta qty. */
+export const casesFor = (p: Product | undefined, unit: SaleUnit, qty: number): number =>
+  !p ? 0 : unit === "bag" ? qty / (p.bags || 1) : qty;
+
+/** Cajas completas de un stock posiblemente fraccionado. */
+export const wholeCases = (stock: number): number => Math.floor(stock);
+
+/** Bolsas sueltas implícitas en la fracción de un stock (para mostrar
+ *  "9 +12b" cuando una venta por bolsa dejó una caja parcial). */
+export const looseBags = (stock: number, bags: number): number =>
+  Math.round((stock - Math.floor(stock)) * (bags || 1));

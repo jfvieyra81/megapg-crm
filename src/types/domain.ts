@@ -108,6 +108,10 @@ export interface ClientFormState {
 // Pedido
 // ============================================================
 
+/** Unidad de venta de un line item. "case" = caja (default, comportamiento
+ *  histórico); "bag" = bolsa suelta (ventas chicas / "calar"). */
+export type SaleUnit = "case" | "bag";
+
 export interface OrderItem {
   productId: string;        // referencia a PRODUCTS[].id (catálogo Mega PG)
   qty: number;              // cajas; ≥ 1
@@ -119,6 +123,8 @@ export interface OrderItem {
   /** Costo unitario (USD/caja) al momento de la venta. Mismo patrón de fallback.
    *  Agregado en Block 4.g. */
   costAtSale?: number;
+  /** Unidad de venta. undefined ⇒ "case" (compat con pedidos legacy). */
+  unit?: SaleUnit;
 }
 
 export interface Order {

@@ -52,7 +52,7 @@ const waOrderEs = (order: Order, client: Client | undefined): string => {
   const items = order.items
     .map(it => {
       const p = pF(it.productId);
-      return `  • ${p?.name || it.productId} x${it.qty} = ${fmt(itemPrice(it) * it.qty * (1 - (order.discount || 0)))}`;
+      return `  • ${p?.name || it.productId}${it.unit === "bag" ? " (bolsa)" : ""} x${it.qty} = ${fmt(itemPrice(it) * it.qty * (1 - (order.discount || 0)))}`;
     })
     .join("\n");
   return `*DULCE SABOR*\nPedido #${order.id.slice(-6).toUpperCase()}\nFecha: ${fmtD(order.date)}\n\nHola ${client?.contact || client?.name || ""},\n\nAquí está la confirmación de tu pedido:\n\n${items}\n${order.discount > 0 ? `\nDescuento: ${fmtPct(order.discount)}% (${client?.tier})\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nFormas de pago: Efectivo, Zelle, Venmo o Cheque\n¿Preguntas? Llámame al (707) 360-7420\n\nOrdena en línea: https://dulcesaborca.com\n\n¡Gracias!\n— José Flores, Dulce Sabor NorCal`;
@@ -62,7 +62,7 @@ const waOrderEn = (order: Order, client: Client | undefined): string => {
   const items = order.items
     .map(it => {
       const p = pF(it.productId);
-      return `  • ${p?.name || it.productId} x${it.qty} = ${fmt(itemPrice(it) * it.qty * (1 - (order.discount || 0)))}`;
+      return `  • ${p?.name || it.productId}${it.unit === "bag" ? " (bag)" : ""} x${it.qty} = ${fmt(itemPrice(it) * it.qty * (1 - (order.discount || 0)))}`;
     })
     .join("\n");
   return `*DULCE SABOR*\nOrder #${order.id.slice(-6).toUpperCase()}\nDate: ${fmtD(order.date)}\n\nHi ${client?.contact || client?.name || ""},\n\nHere's your order confirmation:\n\n${items}\n${order.discount > 0 ? `\nDiscount: ${fmtPct(order.discount)}% (${client?.tier})\n` : ""}\n*TOTAL: ${fmt(order.total)}*\n\nPayment methods: Cash, Zelle, Venmo or Check\nQuestions? Call me at (707) 360-7420\n\nOrder online: https://dulcesaborca.com\n\nThanks!\n— José Flores, Dulce Sabor NorCal`;
@@ -82,7 +82,7 @@ const waReceiptEs = (order: Order, client: Client | undefined): string => {
   const items = order.items
     .map(it => {
       const p = pF(it.productId);
-      return `${p?.name || it.productId} x${it.qty}`;
+      return `${p?.name || it.productId}${it.unit === "bag" ? " (bolsa)" : ""} x${it.qty}`;
     })
     .join(", ");
   return `*DULCE SABOR — Recibo #${order.id.slice(-6).toUpperCase()}*\nFecha: ${fmtD(order.date)}\nCliente: ${client?.name || ""}\nArtículos: ${items}\n${order.discount > 0 ? `Descuento: ${fmtPct(order.discount)}%\n` : ""}*Total: ${fmt(order.total)}*\nEstado: ${statusUpper(order.status, "es")}\n\n¡Gracias por tu compra!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
@@ -92,7 +92,7 @@ const waReceiptEn = (order: Order, client: Client | undefined): string => {
   const items = order.items
     .map(it => {
       const p = pF(it.productId);
-      return `${p?.name || it.productId} x${it.qty}`;
+      return `${p?.name || it.productId}${it.unit === "bag" ? " (bag)" : ""} x${it.qty}`;
     })
     .join(", ");
   return `*DULCE SABOR — Receipt #${order.id.slice(-6).toUpperCase()}*\nDate: ${fmtD(order.date)}\nCustomer: ${client?.name || ""}\nItems: ${items}\n${order.discount > 0 ? `Discount: ${fmtPct(order.discount)}%\n` : ""}*Total: ${fmt(order.total)}*\nStatus: ${statusUpper(order.status, "en")}\n\nThank you for your business!\nJosé Flores • (707) 360-7420\nhttps://dulcesaborca.com`;
