@@ -294,6 +294,7 @@ export interface Template {
   id: string;
   name: string;
   body: string;
+  bodyEn?: string;     // versión en inglés (bilingüe); body = español
   createdAt: string;   // ISO datetime
 }
 
@@ -301,6 +302,7 @@ export interface Template {
 export interface Campaign {
   tiers?: ClientTier[];
   message?: string;
+  messageEn?: string;        // versión en inglés (bilingüe); message = español
   sentIds?: string[];        // ids de clientes ya marcados como enviados
   withPhoneOnly?: boolean;   // se interpreta como (!== false); default-true
 }
