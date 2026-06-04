@@ -157,6 +157,7 @@ export const Clients: React.FC<ClientsProps> = ({
     name: "",
     address: "",
     phone: "",
+    email: "",
     contact: "",
     zone: "",
     tier: "Lista",
@@ -444,6 +445,12 @@ export const Clients: React.FC<ClientsProps> = ({
               value={form.phone}
               onChange={v => setForm(p => ({ ...p, phone: v }))}
               placeholder="(408) 555-1234"
+            />
+            <Inp
+              label="Email"
+              value={form.email}
+              onChange={v => setForm(p => ({ ...p, email: v }))}
+              placeholder="cliente@correo.com"
             />
             <Inp
               label="Zone"

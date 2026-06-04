@@ -825,7 +825,7 @@ export default function App() {
       {tab === "reps" && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
       {tab === "commissions" && <Commissions representatives={representatives} clients={clients} orders={orders} commissions={commissions} setCommissions={setCommissions} saveAll={sv} />}
       {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} products={PRODUCTS} calcWeeks={calcWeeks}/>}
-      {tab === "receipt" && <Receipt order={ro} clients={clients} />}
+      {tab === "receipt" && <Receipt order={ro} clients={clients} representatives={representatives} />}
       {tab === "field" && <FieldDashboard visits={visits} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
       {tab === "analysis" && <FieldExport visits={visits} />}

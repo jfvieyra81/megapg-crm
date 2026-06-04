@@ -44,6 +44,7 @@ export interface Client {
   name: string;
   contact: string;          // persona contacto / encargado
   phone: string;
+  email?: string;           // correo del cliente (opcional)
   address: string;
   zone: string;             // libre; valida contra ZONES en runtime
   tier: ClientTier;
@@ -86,6 +87,7 @@ export interface ClientFormState {
   name: string;
   address: string;
   phone: string;
+  email: string;
   contact: string;
   zone: string;
   tier: ClientTier;

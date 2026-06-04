@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { jsPDF } from "jspdf";
-import type { Client, Language, Order } from "../types/domain";
+import type { Client, Language, Order, Representative } from "../types/domain";
 import { pF, ST_CLR, itemPrice } from "../lib/catalog";
 import { fmt, fmtD, fmtPct } from "../lib/format";
 import {
@@ -63,6 +63,7 @@ const STRINGS = {
     langLabel: "Receipt language:",
     langEs: "Español",
     langEn: "English",
+    salesRep: "Your sales rep:",
   },
   es: {
     selectPrompt: "Selecciona desde Orders.",
@@ -92,6 +93,7 @@ const STRINGS = {
     langLabel: "Idioma del recibo:",
     langEs: "Español",
     langEn: "English",
+    salesRep: "Tu representante:",
   },
 } as const;
 
@@ -113,10 +115,14 @@ const PDF_STATUS_COLOR = {
 interface ReceiptProps {
   order: Order | null;
   clients: Client[];
+  representatives: Representative[];
 }
 
-export const Receipt = ({ order, clients }: ReceiptProps) => {
+export const Receipt = ({ order, clients, representatives }: ReceiptProps) => {
   const cl = order ? clients.find(c => c.id === order.clientId) : undefined;
+  const rep = cl?.representativeId
+    ? representatives.find(r => r.id === cl.representativeId)
+    : undefined;
 
   // Idioma: override manual > client.language > "es" default.
   // Validación defensiva contra valores inválidos (clientes legacy con
@@ -186,6 +192,10 @@ export const Receipt = ({ order, clients }: ReceiptProps) => {
       { align: "center" }
     );
     y += 10;
+    if (rep) {
+      doc.text(`${s.salesRep} ${rep.name} • ${rep.phone}`, W / 2, y, { align: "center" });
+      y += 10;
+    }
     doc.setDrawColor(196, 30, 58);
     doc.setLineWidth(2);
     doc.line(mg, y, W - mg, y);
@@ -353,7 +363,7 @@ td{padding:2px 0}.tot{border-top:2px dashed #000;margin-top:6px;padding-top:4px;
 .pay{border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:10px}
 .ftr{text-align:center;border-top:1px dashed #000;margin-top:6px;padding-top:4px;font-size:9px}
 </style></head><body>
-<div class="hdr"><h1>${BUSINESS_LEGAL_NAME.toUpperCase()}</h1><p>${BUSINESS_ADDRESS}</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p></div>
+<div class="hdr"><h1>${BUSINESS_LEGAL_NAME.toUpperCase()}</h1><p>${BUSINESS_ADDRESS}</p><p>Jos&eacute; Flores &bull; (707) 360-7420</p><p>megapg.norcal@gmail.com</p>${rep ? `<p>${s.salesRep} ${rep.name} &bull; ${rep.phone}</p>` : ""}</div>
 <div class="info"><div><b>${cl?.name || ""}</b>${cl?.phone ? `<br>${cl.phone}` : ""}</div><div style="text-align:right"><b>#${orderNum}</b><br>${fmtD(order.date)}</div></div>
 <table><thead><tr><th>${s.thProduct}</th><th style="text-align:center">${s.thQty}</th><th style="text-align:right">${s.thTotal}</th></tr></thead><tbody>${items}</tbody></table>
 <div class="tot"><div class="line"><span>${s.subtotal}</span><span>${fmt(sub)}</span></div>
@@ -469,6 +479,11 @@ ${order.notes ? `<div style="font-size:10px;margin-top:4px;font-style:italic">${
           <div style={{ fontSize: 12, marginTop: 4 }}>
             José Flores • (707) 360-7420 • megapg.norcal@gmail.com
           </div>
+          {rep && (
+            <div style={{ fontSize: 12, marginTop: 2, color: "#555" }}>
+              {s.salesRep} {rep.name} • {rep.phone}
+            </div>
+          )}
         </div>
         <div
           style={{
