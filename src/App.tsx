@@ -43,6 +43,7 @@ import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
 import { Orders } from "./components/Orders";
+import { FieldOrder } from "./components/FieldOrder";
 import { Receipt } from "./components/Receipt";
 import { Dashboard } from "./components/Dashboard";
 import { PostDelivery } from "./components/PostDelivery";
@@ -774,7 +775,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "fieldorder", l: "Pedido campo" },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
 
   // === D2 (v5.18): Auth gate ===
   if (authState === "checking") return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FDF2E9" }}><div style={{ fontSize: 14, color: "#888" }}>⏳ Verificando sesión...</div></div>;
@@ -815,6 +816,7 @@ export default function App() {
         uploadStorePhoto={uploadStorePhoto}
       />}
       {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
+      {tab === "fieldorder" && <FieldOrder clients={clients} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} representativeId={currentUser?.representativeId ?? null} setTab={setTab} setRO={setRo} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} calcClientCycle={calcClientCycle} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
         {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}

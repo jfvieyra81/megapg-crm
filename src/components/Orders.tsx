@@ -12,7 +12,6 @@ import { useState, useRef } from "react";
 import type {
   Client,
   Order,
-  OrderItem,
   OrderStatus,
   SaleUnit,
 } from "../types/domain";
@@ -27,7 +26,8 @@ import {
   casesFor,
   type InventoryItem,
 } from "../lib/catalog";
-import { fmt, fmtD, fmtPct, uid } from "../lib/format";
+import { buildOrder, applyInventory } from "../lib/business/orders";
+import { fmt, fmtD, fmtPct } from "../lib/format";
 import { WaBtn, waOrder, waPayment } from "../lib/whatsapp";
 import { Btn, Modal, Inp, Badge } from "./ui";
 
@@ -169,38 +169,15 @@ export const Orders = ({
       setStockAck(true);
       return;
     }
-    const vi: OrderItem[] = form.items
-      .filter(it => it.productId)
-      .map(it => {
-        const p = pF(it.productId);
-        return {
-          productId: it.productId,
-          qty: it.qty,
-          unit: it.unit,
-          // Block 4.g: snapshot del precio y costo al momento de la venta.
-          // Bolsa: precio = bagPrice, costo = costo de caja / bolsas.
-          priceAtSale: unitPrice(p, it.unit),
-          costAtSale: unitCost(p, it.unit),
-        };
-      });
-    const total = calcT();
-    const order: Order = {
-      id: uid(),
-      ...form,
-      items: vi,
-      total,
-      discount: disc,
-      created: new Date().toISOString(),
-    };
-    const ni: InventoryItem[] = [...inventory];
-    vi.forEach(it => {
-      const idx = ni.findIndex(inv => inv.productId === it.productId);
-      if (idx >= 0) {
-        // Una bolsa descuenta una fracción de caja (qty / bags).
-        const used = casesFor(pF(it.productId), it.unit ?? "case", it.qty);
-        ni[idx] = { ...ni[idx], stock: Math.max(0, ni[idx].stock - used) };
-      }
+    const order = buildOrder({
+      clientId: form.clientId,
+      date: form.date,
+      notes: form.notes,
+      status: form.status,
+      items: form.items,
+      disc,
     });
+    const ni = applyInventory(inventory, order.items);
     setOrders(prev => {
       const n = [...prev, order];
       saveAll("orders", n);
