@@ -43,6 +43,7 @@ import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
 import { Orders } from "./components/Orders";
+import { mergeById } from "./lib/cloud-merge";
 import { FieldOrder } from "./components/FieldOrder";
 import { Receipt } from "./components/Receipt";
 import { Dashboard } from "./components/Dashboard";
@@ -281,6 +282,18 @@ const cloudUpsert = async (table, items) => {
     return { ok: true, count: rows.length };
   } catch (e) {
     return { ok: false, error: e.message || "Network error" };
+  }
+};
+
+const cloudDownload = async (table) => {
+  if (!cloudEnabled) return { ok: false, rows: [], error: "Supabase no configurado" };
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?select=data`, { headers: authedHeaders() });
+    if (!r.ok) { const txt = await r.text(); return { ok: false, rows: [], error: `HTTP ${r.status}: ${txt.slice(0, 250)}` }; }
+    const rows = await r.json();
+    return { ok: true, rows: Array.isArray(rows) ? rows.map(x => x && x.data).filter(Boolean) : [] };
+  } catch (e) {
+    return { ok: false, rows: [], error: e.message || "Network error" };
   }
 };
 
@@ -550,6 +563,54 @@ export default function App() {
     }
   }, []);
 
+  // === Pull + fusión de la nube (unión por id; en conflicto gana la nube) ===
+  const pullFromCloud = useCallback(async () => {
+    if (!cloudEnabled) return;
+    setCloudStatus("syncing");
+    try {
+      const [cR, oR, rR, mR] = await Promise.all([
+        cloudDownload("clients"),
+        cloudDownload("orders"),
+        cloudDownload("representatives"),
+        cloudDownload("commissions"),
+      ]);
+      const errs = [cR, oR, rR, mR].filter(x => !x.ok).map(x => x.error);
+      const cur = stateRef.current;
+      const nc = cR.ok ? mergeById(cur.clients || [], cR.rows) : (cur.clients || []);
+      const no = oR.ok ? mergeById(cur.orders || [], oR.rows) : (cur.orders || []);
+      const nr = rR.ok ? mergeById(cur.representatives || [], rR.rows) : (cur.representatives || []);
+      const nm = mR.ok ? mergeById(cur.commissions || [], mR.rows) : (cur.commissions || []);
+      setClients(nc); setOrders(no); setRepresentatives(nr); setCommissions(nm);
+      stateRef.current = { ...cur, clients: nc, orders: no, representatives: nr, commissions: nm };
+      S.save({ ...stateRef.current, init: true });
+      if (errs.length) { setCloudStatus("error"); setCloudError(errs[0]); }
+      else { setCloudStatus("synced"); setCloudError(null); }
+    } catch (e) {
+      setCloudStatus("error"); setCloudError(e.message || "Pull fallo");
+    }
+  }, []);
+
+  // Boton "Sincronizar": sube lo local (4 tablas) y luego baja + fusiona.
+  const syncNow = useCallback(async () => {
+    if (!cloudEnabled) return;
+    setCloudStatus("syncing");
+    try {
+      const cur = stateRef.current;
+      for (const t of ["representatives", "clients", "orders", "commissions"]) {
+        await cloudUpsert(t, cur[t] || []);
+      }
+      setCloudSyncedFlag(true);
+    } catch (e) {
+      setCloudStatus("error"); setCloudError(e.message || "Push fallo");
+    }
+    await pullFromCloud();
+  }, [pullFromCloud]);
+
+  // Pull automatico al iniciar sesion (una vez que la auth queda lista).
+  useEffect(() => {
+    if (cloudEnabled && authState === "ready") { pullFromCloud(); }
+  }, [authState, pullFromCloud]);
+
   // === D1: Bulk migration localStorage → Supabase ===
   const migrateToCloud = async () => {
     if (!cloudEnabled) { alert("Supabase no está configurado en este build."); return; }
@@ -793,6 +854,7 @@ export default function App() {
         <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
+        {cloudEnabled && currentUser && <button onClick={syncNow} title="Sube lo local y baja la nube (fusiona ambos dispositivos)" style={{ fontSize: 10, fontWeight: 600, color: "#6C3483", background: "none", border: "1px solid #6C3483", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Sincronizar</button>}
         {/* D1 (v5.17): Cloud sync indicator */}
         {cloudEnabled && (cloudStatus === "unsynced"
           ? <button onClick={migrateToCloud} title="Migra todo tu localStorage a Supabase (one-shot)" style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#1A5276", border: "none", borderRadius: 4, padding: "3px 8px", cursor: "pointer" }}>☁️ Migrar al cloud</button>
