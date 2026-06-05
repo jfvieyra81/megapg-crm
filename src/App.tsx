@@ -297,6 +297,22 @@ const cloudDownload = async (table) => {
   }
 };
 
+// Borra filas de Supabase por id (propagar borrados). ids: array de strings.
+const cloudDelete = async (table, ids) => {
+  if (!cloudEnabled || !Array.isArray(ids) || ids.length === 0) return { ok: true };
+  try {
+    const inList = ids.map(id => `"${id}"`).join(",");
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=in.(${inList})`, {
+      method: "DELETE",
+      headers: authedHeaders(),
+    });
+    if (!r.ok) { const txt = await r.text(); return { ok: false, error: `HTTP ${r.status}: ${txt.slice(0, 200)}` }; }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message || "Network error" };
+  }
+};
+
 // === D2 (v5.18): Supabase Auth ===
 const AUTH_TOKEN_KEY = "ds-supabase-auth";
 const authStore = {
@@ -492,6 +508,8 @@ export default function App() {
   // If cloudEnabled is false (no Supabase config), we skip auth entirely (legacy mode).
   const [authState, setAuthState] = useState(cloudEnabled ? "checking" : "ready");
   const [currentUser, setCurrentUser] = useState(null); // { email, role, representativeId, auth_user_id }
+  const currentUserRef = useRef(null);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   // Bootstrap auth on mount: parse magic-link hash, validate session, lookup app_user
   useEffect(() => {
@@ -551,11 +569,18 @@ export default function App() {
   };
 
   const sv = useCallback((type, data) => {
+    const prev = stateRef.current[type];
     stateRef.current = { ...stateRef.current, [type]: data };
     S.save({ ...stateRef.current, init: true });
     // D1: auto-sync to cloud on save (fire-and-forget) if migration done
     if (cloudEnabled && cloudIsSynced() && ["clients", "orders", "representatives", "commissions"].includes(type)) {
       setCloudStatus("syncing");
+      // (A) Propagar borrados a la nube (solo admin): ids que estaban y ya no.
+      if (currentUserRef.current?.role === "admin" && Array.isArray(prev) && Array.isArray(data)) {
+        const keep = new Set(data.map(x => x && x.id));
+        const removed = prev.filter(x => x && x.id && !keep.has(x.id)).map(x => x.id);
+        if (removed.length) cloudDelete(type, removed);
+      }
       cloudUpsert(type, data).then(r => {
         if (r.ok) { setCloudStatus("synced"); setCloudError(null); }
         else { setCloudStatus("error"); setCloudError(r.error); }
@@ -610,6 +635,30 @@ export default function App() {
   useEffect(() => {
     if (cloudEnabled && authState === "ready") { pullFromCloud(); }
   }, [authState, pullFromCloud]);
+
+  // (B) "Limpiar nube": deja la nube IGUAL a este dispositivo (borra de la nube
+  // lo que no este aqui). Solo admin. Usar tras Sincronizar.
+  const reconcileCloud = useCallback(async () => {
+    if (!cloudEnabled) return;
+    if (currentUserRef.current?.role !== "admin") return;
+    setCloudStatus("syncing");
+    try {
+      const cur = stateRef.current;
+      for (const t of ["representatives", "clients", "orders", "commissions"]) {
+        const localIds = new Set((cur[t] || []).map(x => x && x.id));
+        const dl = await cloudDownload(t);
+        if (dl.ok) {
+          const toRemove = dl.rows.map(x => x && x.id).filter(id => id && !localIds.has(id));
+          if (toRemove.length) await cloudDelete(t, toRemove);
+        }
+        await cloudUpsert(t, cur[t] || []);
+      }
+      setCloudSyncedFlag(true);
+      setCloudStatus("synced"); setCloudError(null);
+    } catch (e) {
+      setCloudStatus("error"); setCloudError(e.message || "Limpiar nube fallo");
+    }
+  }, []);
 
   // === D1: Bulk migration localStorage → Supabase ===
   const migrateToCloud = async () => {
@@ -855,6 +904,7 @@ export default function App() {
         <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
         {cloudEnabled && currentUser && <button onClick={syncNow} title="Sube lo local y baja la nube (fusiona ambos dispositivos)" style={{ fontSize: 10, fontWeight: 600, color: "#6C3483", background: "none", border: "1px solid #6C3483", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Sincronizar</button>}
+        {cloudEnabled && currentUser?.role === "admin" && <button onClick={() => { if (resetRef.current === "cloud") { reconcileCloud(); resetRef.current = null; setResetConf(null); } else { resetRef.current = "cloud"; setResetConf("cloud"); setTimeout(() => { if (resetRef.current === "cloud") { resetRef.current = null; setResetConf(null); } }, 3000); } }} title="Deja la nube igual a este dispositivo (borra de la nube lo que no este aqui). Solo admin." style={{ fontSize: 10, fontWeight: 600, color: resetConf === "cloud" ? "#fff" : "#C0392B", background: resetConf === "cloud" ? "#C0392B" : "none", border: "1px solid #C0392B", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "cloud" ? "Seguro?" : "Limpiar nube"}</button>}
         {/* D1 (v5.17): Cloud sync indicator */}
         {cloudEnabled && (cloudStatus === "unsynced"
           ? <button onClick={migrateToCloud} title="Migra todo tu localStorage a Supabase (one-shot)" style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#1A5276", border: "none", borderRadius: 4, padding: "3px 8px", cursor: "pointer" }}>☁️ Migrar al cloud</button>
