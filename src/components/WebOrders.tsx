@@ -56,7 +56,7 @@ export const WebOrders = ({ clients, setClients, orders, setOrders, inventory, s
     setLoading(true); setError(null);
     try {
       const url = `${supa.url}/rest/v1/web_orders?status=eq.${statusFilter}&order=created_at.desc&limit=100`;
-      const resp = await fetch(url, { headers: { "apikey": supa.key, "Authorization": `Bearer ${supa.key}` } });
+      const resp = await fetch(url, { headers: supa.headers });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       setWebOrders(Array.isArray(data) ? data : []);

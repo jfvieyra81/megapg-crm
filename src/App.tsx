@@ -768,7 +768,7 @@ export default function App() {
     const fetchCount = async () => {
       try {
         const resp = await fetch(`${SUPA_URL}/rest/v1/web_orders?status=eq.pending&select=id`, {
-          headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` }
+          headers: authedHeaders()
         });
         if (resp.ok) {
           const data = await resp.json();
@@ -797,7 +797,7 @@ export default function App() {
       let webPending = 0;
       try {
         const resp = await fetch(`${SUPA_URL}/rest/v1/web_orders?status=eq.pending&select=id`, {
-          headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` }
+          headers: authedHeaders()
         });
         if (resp.ok) {
           const data = await resp.json();
@@ -933,7 +933,7 @@ export default function App() {
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
         {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}
       {tab === "anuncios" && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
-      {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: SUPA_HEADERS }} />}
+      {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
       {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} products={PRODUCTS} calcWeeks={calcWeeks}/>}
       {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} products={PRODUCTS}/>}
       {tab === "reps" && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
