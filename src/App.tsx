@@ -892,6 +892,7 @@ export default function App() {
   // Shell móvil: el hook debe llamarse ANTES de los returns del auth gate
   // (si no, el orden de hooks cambia entre renders y React truena).
   const isMobile = useIsMobile();
+  const [mobileMenu, setMobileMenu] = useState(false);
 
   // === D2 (v5.18): Auth gate ===
   if (authState === "checking") return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FDF2E9" }}><div style={{ fontSize: 14, color: "#888" }}>⏳ Verificando sesión...</div></div>;
@@ -899,18 +900,28 @@ export default function App() {
 
   if (authState === "denied") return <AccessDeniedScreen email={currentUser?.email} onLogout={handleLogout} />;
 
+  // Bloque móvil 2.1: los botones de acción del header viven en estas consts.
+  // En desktop se renderizan inline (mismo orden y estilos de siempre); en
+  // móvil se ocultan del header y aparecen dentro del menú "⋮". `mAct` solo
+  // agranda el área de tap en móvil (en desktop el spread es no-op).
+  const mAct = isMobile ? { fontSize: 13, padding: "10px 12px", textAlign: "left", borderRadius: 8 } : null;
+  const headerActionsMain = <>
+    {currentUser && <button onClick={handleLogout} title="Cerrar sesión" style={{ fontSize: 10, color: "#888", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer", ...mAct }}>Logout</button>}
+    <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer", ...mAct }}>Export</button>
+    <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer", ...mAct }}>Import</button>
+    {cloudEnabled && currentUser && <button onClick={syncNow} title="Sube lo local y baja la nube (fusiona ambos dispositivos)" style={{ fontSize: 10, fontWeight: 600, color: "#6C3483", background: "none", border: "1px solid #6C3483", borderRadius: 4, padding: "2px 6px", cursor: "pointer", ...mAct }}>Sincronizar</button>}
+    {cloudEnabled && currentUser?.role === "admin" && <button onClick={() => { if (resetRef.current === "cloud") { reconcileCloud(); resetRef.current = null; setResetConf(null); } else { resetRef.current = "cloud"; setResetConf("cloud"); setTimeout(() => { if (resetRef.current === "cloud") { resetRef.current = null; setResetConf(null); } }, 3000); } }} title="Deja la nube igual a este dispositivo (borra de la nube lo que no este aqui). Solo admin." style={{ fontSize: 10, fontWeight: 600, color: resetConf === "cloud" ? "#fff" : "#C0392B", background: resetConf === "cloud" ? "#C0392B" : "none", border: "1px solid #C0392B", borderRadius: 4, padding: "2px 6px", cursor: "pointer", ...mAct }}>{resetConf === "cloud" ? "Seguro?" : "Limpiar nube"}</button>}
+  </>;
+  const headerActionClear = <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives, commissions: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setRepresentatives(defaultRepresentatives); setCommissions([]); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer", ...mAct }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button>;
+
   return <div style={{ fontFamily: "Arial,sans-serif", maxWidth: "100%", padding: "8px 12px", paddingBottom: isMobile ? 84 : 8 }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.22.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.23.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
-        {currentUser && <button onClick={handleLogout} title="Cerrar sesión" style={{ fontSize: 10, color: "#888", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Logout</button>}
-        <button onClick={exportData} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Export</button>
-        <button onClick={() => importRef.current?.click()} style={{ fontSize: 10, color: "#1A5276", background: "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Import</button>
+        {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-        {cloudEnabled && currentUser && <button onClick={syncNow} title="Sube lo local y baja la nube (fusiona ambos dispositivos)" style={{ fontSize: 10, fontWeight: 600, color: "#6C3483", background: "none", border: "1px solid #6C3483", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>Sincronizar</button>}
-        {cloudEnabled && currentUser?.role === "admin" && <button onClick={() => { if (resetRef.current === "cloud") { reconcileCloud(); resetRef.current = null; setResetConf(null); } else { resetRef.current = "cloud"; setResetConf("cloud"); setTimeout(() => { if (resetRef.current === "cloud") { resetRef.current = null; setResetConf(null); } }, 3000); } }} title="Deja la nube igual a este dispositivo (borra de la nube lo que no este aqui). Solo admin." style={{ fontSize: 10, fontWeight: 600, color: resetConf === "cloud" ? "#fff" : "#C0392B", background: resetConf === "cloud" ? "#C0392B" : "none", border: "1px solid #C0392B", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "cloud" ? "Seguro?" : "Limpiar nube"}</button>}
         {/* D1 (v5.17): Cloud sync indicator */}
         {cloudEnabled && (cloudStatus === "unsynced"
           ? <button onClick={migrateToCloud} title="Migra todo tu localStorage a Supabase (one-shot)" style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#1A5276", border: "none", borderRadius: 4, padding: "3px 8px", cursor: "pointer" }}>☁️ Migrar al cloud</button>
@@ -919,7 +930,17 @@ export default function App() {
               {cloudStatus === "syncing" && "☁️ ⏳"}
               {cloudStatus === "error" && "☁️ ⚠️"}
             </button>)}
-        <button onClick={() => { if (resetRef.current === "clear") { const empty = { clients: [], orders: [], inventory: [], purchases: [], visits: [], reminders: {}, followups: {}, welcomes: {}, templates: [], campaign: defaultCampaign, representatives: defaultRepresentatives, commissions: [] }; stateRef.current = empty; S.save({ ...empty, init: true }); setClients([]); setOrders([]); setInventory([]); setPurchases([]); setVisits([]); setReminders({}); setFollowups({}); setWelcomes({}); setTemplates([]); setCampaign(defaultCampaign); setRepresentatives(defaultRepresentatives); setCommissions([]); setTab("dashboard"); resetRef.current = null; setResetConf(null); } else { resetRef.current = "clear"; setResetConf("clear"); setTimeout(() => { if (resetRef.current === "clear") { resetRef.current = null; setResetConf(null); } }, 3000); } }} style={{ fontSize: 10, color: resetConf === "clear" ? "#fff" : "#C41E3A", background: resetConf === "clear" ? "#C41E3A" : "none", border: "1px solid #ddd", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}>{resetConf === "clear" ? "Sure?" : "Clear all"}</button></div>
+        {!isMobile && headerActionClear}
+        {isMobile && <div style={{ position: "relative" }}>
+          <button onClick={() => setMobileMenu(o => !o)} aria-label="Más opciones" style={{ fontSize: 18, lineHeight: 1, color: "#555", background: mobileMenu ? "#f2f2f2" : "none", border: "1px solid #ddd", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>⋮</button>
+          {mobileMenu && <>
+            <div onClick={() => setMobileMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 1001 }} />
+            <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 1002, background: "#fff", border: "1px solid #e5e5e5", borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.15)", padding: 10, display: "flex", flexDirection: "column", gap: 8, minWidth: 180 }}>
+              {headerActionsMain}
+              {headerActionClear}
+            </div>
+          </>}
+        </div>}</div>
       {!isMobile && <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div>}</div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} calcWeeks={calcWeeks} />}
