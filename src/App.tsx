@@ -174,7 +174,9 @@ const uploadStorePhoto = async (file, clientId) => {
   try {
     const resp = await fetch(`${SUPA_URL}/storage/v1/object/${STORE_PHOTOS_BUCKET}/${path}`, {
       method: "POST",
-      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Content-Type": file.type || "image/jpeg", "x-upsert": "true" },
+      // Bearer = token de sesión si hay login (igual que authedHeaders; aquí no
+      // sirve el helper porque Content-Type es el del archivo, no JSON).
+      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${authStore.get()?.access_token || SUPA_KEY}`, "Content-Type": file.type || "image/jpeg", "x-upsert": "true" },
       body: file,
     });
     if (!resp.ok) { console.error("Upload failed:", await resp.text()); return null; }
@@ -211,7 +213,7 @@ const syncClientToPublicStores = async (client, orders) => {
     if (!client.showOnWebsite) {
       const r = await fetch(`${SUPA_URL}/rest/v1/public_stores?id=eq.${client.id}`, {
         method: "DELETE",
-        headers: SUPA_HEADERS,
+        headers: authedHeaders(),
       });
       return r.ok ? { ok: true, action: "removed" } : { ok: false, error: await r.text() };
     }
@@ -231,7 +233,7 @@ const syncClientToPublicStores = async (client, orders) => {
     };
     const resp = await fetch(`${SUPA_URL}/rest/v1/public_stores`, {
       method: "POST",
-      headers: { ...SUPA_HEADERS, "Prefer": "resolution=merge-duplicates,return=representation" },
+      headers: { ...authedHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(row),
     });
     if (!resp.ok) { const err = await resp.text(); console.error("Sync failed:", err); return { ok: false, error: err }; }
@@ -878,7 +880,7 @@ export default function App() {
       try {
         const resp = await fetch(`${SUPA_URL}/rest/v1/daily_digests`, {
           method: 'POST',
-          headers: SUPA_HEADERS,
+          headers: authedHeaders(),
           body: JSON.stringify({ body: lines.join('\n'), digest_date: today })
         });
         if (resp.ok) {
@@ -929,7 +931,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.26.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.27.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
