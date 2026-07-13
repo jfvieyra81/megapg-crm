@@ -43,7 +43,7 @@ import { FieldDashboard, VisitForm, VisitsList, FieldExport } from "./components
 import { Inventory, Purchases, Reports } from "./components/InventoryReports";
 import { Clients } from "./components/Clients";
 import { Orders } from "./components/Orders";
-import { mergeById } from "./lib/cloud-merge";
+import { mergeById, mergeByKey } from "./lib/cloud-merge";
 import { FieldOrder } from "./components/FieldOrder";
 import { Receipt } from "./components/Receipt";
 import { Dashboard } from "./components/Dashboard";
@@ -263,8 +263,15 @@ const serializeForCloud = (table, item) => {
   if (table === "orders") return { id: item.id, client_id: item.clientId, status: item.status || "pending", paid_date: item.paidDate || null, data: item, updated_at };
   if (table === "representatives") return { id: item.id, data: item, updated_at };
   if (table === "commissions") return { id: item.id, representative_id: item.representativeId, month: item.month, data: item, updated_at };
+  if (table === "inventory") return { id: item.productId, data: item, updated_at }; // inventario no tiene id propio: la llave es el producto
+  if (table === "purchases") return { id: item.id, data: item, updated_at };
   return item;
 };
+
+// Tablas que se sincronizan a la nube y la llave única de cada registro
+// (inventory usa productId; el resto usa id).
+const CLOUD_TABLES = ["representatives", "clients", "orders", "commissions", "inventory", "purchases"];
+const cloudKeyOf = (table, item) => (table === "inventory" ? item?.productId : item?.id);
 
 const cloudUpsert = async (table, items) => {
   if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
@@ -575,12 +582,12 @@ export default function App() {
     stateRef.current = { ...stateRef.current, [type]: data };
     S.save({ ...stateRef.current, init: true });
     // D1: auto-sync to cloud on save (fire-and-forget) if migration done
-    if (cloudEnabled && cloudIsSynced() && ["clients", "orders", "representatives", "commissions"].includes(type)) {
+    if (cloudEnabled && cloudIsSynced() && CLOUD_TABLES.includes(type)) {
       setCloudStatus("syncing");
-      // (A) Propagar borrados a la nube (solo admin): ids que estaban y ya no.
+      // (A) Propagar borrados a la nube (solo admin): llaves que estaban y ya no.
       if (currentUserRef.current?.role === "admin" && Array.isArray(prev) && Array.isArray(data)) {
-        const keep = new Set(data.map(x => x && x.id));
-        const removed = prev.filter(x => x && x.id && !keep.has(x.id)).map(x => x.id);
+        const keep = new Set(data.map(x => cloudKeyOf(type, x)));
+        const removed = prev.map(x => cloudKeyOf(type, x)).filter(k => k && !keep.has(k));
         if (removed.length) cloudDelete(type, removed);
       }
       cloudUpsert(type, data).then(r => {
@@ -595,20 +602,24 @@ export default function App() {
     if (!cloudEnabled) return;
     setCloudStatus("syncing");
     try {
-      const [cR, oR, rR, mR] = await Promise.all([
+      const [cR, oR, rR, mR, iR, pR] = await Promise.all([
         cloudDownload("clients"),
         cloudDownload("orders"),
         cloudDownload("representatives"),
         cloudDownload("commissions"),
+        cloudDownload("inventory"),
+        cloudDownload("purchases"),
       ]);
-      const errs = [cR, oR, rR, mR].filter(x => !x.ok).map(x => x.error);
+      const errs = [cR, oR, rR, mR, iR, pR].filter(x => !x.ok).map(x => x.error);
       const cur = stateRef.current;
       const nc = cR.ok ? mergeById(cur.clients || [], cR.rows) : (cur.clients || []);
       const no = oR.ok ? mergeById(cur.orders || [], oR.rows) : (cur.orders || []);
       const nr = rR.ok ? mergeById(cur.representatives || [], rR.rows) : (cur.representatives || []);
       const nm = mR.ok ? mergeById(cur.commissions || [], mR.rows) : (cur.commissions || []);
-      setClients(nc); setOrders(no); setRepresentatives(nr); setCommissions(nm);
-      stateRef.current = { ...cur, clients: nc, orders: no, representatives: nr, commissions: nm };
+      const ni = iR.ok ? mergeByKey(cur.inventory || [], iR.rows, x => x && x.productId) : (cur.inventory || []);
+      const np = pR.ok ? mergeById(cur.purchases || [], pR.rows) : (cur.purchases || []);
+      setClients(nc); setOrders(no); setRepresentatives(nr); setCommissions(nm); setInventory(ni); setPurchases(np);
+      stateRef.current = { ...cur, clients: nc, orders: no, representatives: nr, commissions: nm, inventory: ni, purchases: np };
       S.save({ ...stateRef.current, init: true });
       if (errs.length) { setCloudStatus("error"); setCloudError(errs[0]); }
       else { setCloudStatus("synced"); setCloudError(null); }
@@ -623,7 +634,7 @@ export default function App() {
     setCloudStatus("syncing");
     try {
       const cur = stateRef.current;
-      for (const t of ["representatives", "clients", "orders", "commissions"]) {
+      for (const t of CLOUD_TABLES) {
         await cloudUpsert(t, cur[t] || []);
       }
       setCloudSyncedFlag(true);
@@ -646,11 +657,11 @@ export default function App() {
     setCloudStatus("syncing");
     try {
       const cur = stateRef.current;
-      for (const t of ["representatives", "clients", "orders", "commissions"]) {
-        const localIds = new Set((cur[t] || []).map(x => x && x.id));
+      for (const t of CLOUD_TABLES) {
+        const localIds = new Set((cur[t] || []).map(x => cloudKeyOf(t, x)));
         const dl = await cloudDownload(t);
         if (dl.ok) {
-          const toRemove = dl.rows.map(x => x && x.id).filter(id => id && !localIds.has(id));
+          const toRemove = dl.rows.map(x => cloudKeyOf(t, x)).filter(id => id && !localIds.has(id));
           if (toRemove.length) await cloudDelete(t, toRemove);
         }
         await cloudUpsert(t, cur[t] || []);
@@ -670,7 +681,7 @@ export default function App() {
     setMigrateResults({});
     setCloudError(null);
 
-    const types = ["representatives", "clients", "orders", "commissions"];
+    const types = CLOUD_TABLES;
     const results = {};
 
     for (const t of types) {
@@ -918,7 +929,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.24.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.25.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -976,7 +987,7 @@ export default function App() {
     {/* === D1 (v5.17): Migration progress modal === */}
     {showMigrateModal && <Modal title="☁️ Migración a Supabase" onClose={() => (migrateStep === "done" || migrateStep === "error") && setShowMigrateModal(false)}>
       {migrateStep === "starting" && <p style={{ fontSize: 13, color: "#555" }}>Iniciando migración...</p>}
-      {(["representatives", "clients", "orders", "commissions"].includes(migrateStep)) && <div style={{ fontSize: 13, color: "#555" }}>
+      {CLOUD_TABLES.includes(migrateStep) && <div style={{ fontSize: 13, color: "#555" }}>
         <p>Subiendo <b>{migrateStep}</b>...</p>
         <div style={{ background: "#f8f8f8", borderRadius: 6, padding: "10px 14px", fontFamily: "monospace", fontSize: 12 }}>
           {Object.entries(migrateResults).map(([k, v]) => <div key={k}>{v.ok ? "✓" : "✗"} {k}: {v.count} registros{v.error ? ` — ${v.error}` : ""}</div>)}
