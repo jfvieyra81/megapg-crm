@@ -918,7 +918,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.23.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.24.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />

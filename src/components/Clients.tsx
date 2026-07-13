@@ -26,6 +26,7 @@ import type {
 } from "../types/domain";
 import { Badge, Btn, Modal, Inp } from "./ui";
 import { fmt, fmtD, uid } from "../lib/format";
+import { useIsMobile } from "../lib/useIsMobile";
 
 // ============================================================
 // Constantes y helpers locales (duplicación temporal con App.tsx)
@@ -153,6 +154,8 @@ export const Clients: React.FC<ClientsProps> = ({
   syncAllPublicStores,
   uploadStorePhoto,
 }) => {
+  // Bloque móvil 2.2: en celular cada fila se apila como tarjeta.
+  const isMobile = useIsMobile();
   const emptyForm: ClientFormState = {
     name: "",
     address: "",
@@ -371,6 +374,7 @@ export const Clients: React.FC<ClientsProps> = ({
               border: "1px solid #eee",
               borderRadius: 8,
               marginBottom: 5,
+              ...(isMobile && { flexDirection: "column", alignItems: "stretch", gap: 8, padding: "12px 14px", marginBottom: 8 }),
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -394,7 +398,7 @@ export const Clients: React.FC<ClientsProps> = ({
                 {[c.contact, c.phone].filter(Boolean).join(" • ")}
               </div>
             </div>
-            <div style={{ textAlign: "right", marginRight: 10, flexShrink: 0 }}>
+            <div style={{ textAlign: isMobile ? "left" : "right", marginRight: isMobile ? 0 : 10, flexShrink: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>
                 {co.length} orders • {fmt(ts)}
               </div>
@@ -402,7 +406,7 @@ export const Clients: React.FC<ClientsProps> = ({
                 {last ? `Last: ${fmtD(last.date)}` : "No orders"}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: isMobile ? 8 : 4, flexShrink: 0 }}>
               {c.phone && (
                 <WaBtn
                   phone={c.phone}

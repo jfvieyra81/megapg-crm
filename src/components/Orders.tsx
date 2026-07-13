@@ -30,6 +30,7 @@ import { buildOrder, applyInventory } from "../lib/business/orders";
 import { fmt, fmtD, fmtPct } from "../lib/format";
 import { WaBtn, waOrder, waPayment } from "../lib/whatsapp";
 import { Btn, Modal, Inp, Badge } from "./ui";
+import { useIsMobile } from "../lib/useIsMobile";
 
 // ============================================================
 // Tipos locales del formulario
@@ -86,6 +87,8 @@ export const Orders = ({
   setTab,
   setRO,
 }: OrdersProps) => {
+  // Bloque móvil 2.2: en celular cada fila se apila como tarjeta.
+  const isMobile = useIsMobile();
   const [sf, setSf] = useState<boolean>(false);
   const [delConfirm, setDelConfirm] = useState<string | null>(null);
   const delORef = useRef<string | null>(null);
@@ -330,6 +333,7 @@ export const Orders = ({
                 borderRadius: 8,
                 marginBottom: 4,
                 fontSize: 13,
+                ...(isMobile && { flexDirection: "column" as const, alignItems: "stretch" as const, gap: 8, padding: "12px 14px", marginBottom: 8 }),
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -349,9 +353,10 @@ export const Orders = ({
                   alignItems: "center",
                   gap: 6,
                   flexShrink: 0,
+                  ...(isMobile && { flexWrap: "wrap" as const, gap: 8 }),
                 }}
               >
-                <div style={{ textAlign: "right", marginRight: 4 }}>
+                <div style={{ textAlign: isMobile ? "left" : "right", marginRight: isMobile ? "auto" : 4 }}>
                   <div style={{ fontWeight: 700 }}>{fmt(o.total)}</div>
                   <div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div>
                 </div>
