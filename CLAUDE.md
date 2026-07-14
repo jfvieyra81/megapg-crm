@@ -51,15 +51,19 @@ Usuario de campo: Francisco (representante, usa la app desde el celular).
 - Duplicación temporal de constantes (TIER_CLR, LOW, etc.) en componentes:
   deuda aceptada; se limpia en un pase de dedup dedicado, no al pasar.
 
-## Prioridades abiertas (2026-07-13)
+## Prioridades abiertas (2026-07-13, tras cerrar RLS)
 
-1. **RLS/seguridad (top):** endurecer políticas de las tablas core + las nuevas
-   `inventory`/`purchases` (hoy permisivas) + `public_stores` pendiente.
-   `customer_orders` y `web_orders` ya quedaron cerradas.
-2. Pedido de campo: historial del cliente + "repetir último pedido".
-3. Sincronizar visits/reminders/followups (mismo patrón que inventory).
-4. Bug UTC en pedidos después de ~5pm PT (`todayLocal()` pendiente).
-5. Tailwind: diferido a propósito hasta terminar el refactor estructural.
+1. Pedido de campo: historial del cliente + "repetir último pedido"
+   (práctica #1 de la industria según investigación 2026-07-13).
+2. Sincronizar visits/reminders/followups (mismo patrón que inventory).
+3. Bug UTC en pedidos después de ~5pm PT (`todayLocal()` pendiente).
+4. Tailwind: diferido a propósito hasta terminar el refactor estructural.
+
+**Seguridad (RLS): COMPLETADO 2026-07-13.** Las 8 tablas + storage cerradas
+(ver `supabase/2026-07-13_rls_fase3_candado.sql`); lectura pública solo en
+`public_stores` y fotos (el sitio la necesita). `is_app_user()` = membresía en
+`app_users`. ⚠️ Francisco NO tiene fila en `app_users` — hoy no puede entrar al
+CRM; darle acceso = insertar su fila (role='rep') y las políticas lo cubren solas.
 
 Los SQL que José debe correr en Supabase se guardan en `supabase/*.sql`
 con fecha, y se le dan con instrucciones de pegar-y-Run (él no escribe SQL).
