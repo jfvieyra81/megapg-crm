@@ -94,6 +94,36 @@ Marca cada casilla en orden. **No avances si una falla.**
 
 ### Pre-vuelo
 
+- [ ] **1.0 CONFIRMACIÓN INEQUÍVOCA DEL PROYECTO SUPABASE.** Obligatorio **antes
+      de abrir o usar el SQL Editor**, y antes de cualquier otro punto de este
+      checklist. **No basta con el nombre visible** — dos proyectos distintos
+      pueden tener nombres parecidos (o el mismo nombre, en organizaciones
+      distintas).
+
+      - [ ] Leer visualmente en el Dashboard de Supabase:
+        - **nombre del proyecto**
+        - **organización o workspace** (no solo el proyecto — la organización
+          también, porque el nombre del proyecto puede repetirse entre
+          organizaciones distintas a las que José tenga acceso)
+        - **región** del proyecto
+        - **URL o project ref** (el identificador único que aparece en la URL
+          del dashboard, tipo `https://supabase.com/dashboard/project/<ref>`,
+          y que también aparece en `Settings → General`)
+        - **entorno:** confirmar que es **producción** (no un proyecto de
+          prueba, staging, o de otro cliente)
+      - [ ] Comparar esos cinco datos con la referencia conocida del proyecto
+        Mega PG CRM (el que usa `megapg-crm.vercel.app`). Si no se tiene esa
+        referencia anotada de antes, **anotarla ahora** en un lugar seguro para
+        futuras ejecuciones.
+      - [ ] Tomar una **captura de pantalla** del dashboard mostrando esos
+        cinco datos, o anotar el **project ref** a mano, **antes de pegar
+        cualquier SQL** en el editor.
+
+      **Condición STOP:** si existe **cualquier duda** sobre el proyecto, la
+      organización o el entorno que está abierto — por mínima que parezca —
+      **no pegar ni ejecutar SQL**. Cerrar la pestaña, volver a entrar desde
+      cero al dashboard, y repetir esta verificación antes de continuar.
+
 - [ ] **1.1 Respaldo / punto de restauración.** Confirmar en Supabase que hay
       backup reciente o PITR habilitado. Es la red de seguridad real; el rollback
       escrito cubre el esquema, no un accidente de datos.
@@ -578,9 +608,20 @@ a Francisco, por si su acceso se habilita en el intervalo.
 
 ### 8.3 Cómo verificar que no entraron pedidos nuevos
 
-Correr esta consulta de solo lectura **antes de migrar** (para tener la línea
-base) y **de nuevo antes de levantar el congelamiento**. Los tres números deben
-ser **idénticos** en ambos momentos:
+**Tres valores distintos, que no deben confundirse entre sí:**
+
+| Concepto | Qué es | De dónde sale |
+|---|---|---|
+| **Valor histórico esperado** | La cifra documentada en la auditoría del 2026-07-24: `pedidos_con_web_order_id = 0`, `web_orders_importados = 13`. Es una **referencia documental**, congelada en el momento en que se hizo el reporte forense. | `docs/RECONCILIACION_HISTORICA.md` y el precheck ya ejecutado. |
+| **Línea base real (Consulta A)** | El valor que la base **realmente tiene** en el instante en que se inicia el despliegue de hoy. Puede coincidir con el histórico o no (por ejemplo, si se capturó algún pedido normal entre el 24 de julio y la fecha real de ejecución). | Se mide corriendo la Consulta A, ahora mismo, al declarar el congelamiento. |
+| **Valor de referencia durante el congelamiento** | La línea base real (Consulta A) — no el número histórico — es lo que debe permanecer estable mientras dure el congelamiento. | Consultas B y C se comparan contra A, no contra "13". |
+
+**`web_orders_importados = 13` NO es una condición rígida de éxito operativo.**
+Es una referencia histórica documentada, útil para detectar sorpresas, pero el
+criterio real de "todo va bien" es que **A, B y C coincidan entre sí** (con la
+única excepción explicable: una prueba controlada autorizada).
+
+#### Consulta A — Línea base real (correr AL INICIAR el congelamiento)
 
 ```sql
 select
@@ -595,20 +636,83 @@ select
                                                            as importados_durante_congelamiento;
 ```
 
-**Valores esperados durante todo el congelamiento:**
+- **Propósito:** establecer el punto de referencia real de hoy. Esta corrida
+  **define** la línea base; no se compara contra sí misma.
+- **Qué hacer con el resultado:** **anotarlo** (los tres números) en el registro
+  de §8.4. Esto es "Consulta A" en todo lo que sigue.
+- **Condición para detenerse en ESTA corrida:** si `pedidos_con_web_order_id` o
+  `web_orders_importados` **difieren del valor histórico esperado** (0 y 13),
+  **no continuar automáticamente** — investigar primero por qué cambió respecto
+  a la auditoría del 24 de julio (¿se capturó un pedido nuevo con `webOrderId`?
+  ¿se importó algo manualmente desde entonces?). Puede ser una explicación
+  legítima (por eso no es un STOP automático de esquema), pero **debe
+  entenderse antes de declarar la línea base como válida**.
 
-| Columna | Esperado |
-|---|---|
-| `pedidos_con_web_order_id` | igual a la línea base (hoy **0**) |
-| `web_orders_importados` | igual a la línea base (hoy **13**) |
-| `importados_durante_congelamiento` | **0** |
+#### Consulta B — Verificación previa a migrar (correr JUSTO ANTES del Paso 5)
 
-Si `importados_durante_congelamiento > 0`, **el congelamiento se rompió**:
-identificar ese `web_order`, verificar si su pedido llegó a Supabase, y revisar el
-dispositivo que lo importó por un pedido no sincronizado.
+Misma consulta, con el mismo `<FECHA_HORA_INICIO_CONGELAMIENTO>` de la Consulta A:
+
+```sql
+select
+  (select count(*) from public.orders
+     where data ->> 'webOrderId' is not null
+       and data ->> 'webOrderId' <> '')                    as pedidos_con_web_order_id,
+  (select count(*) from public.web_orders
+     where status = 'imported')                            as web_orders_importados,
+  (select count(*) from public.web_orders
+     where status = 'imported'
+       and approved_at > '<FECHA_HORA_INICIO_CONGELAMIENTO>'::timestamptz)
+                                                           as importados_durante_congelamiento;
+```
+
+- **Propósito:** cerrar la ventana de tiempo entre declarar el congelamiento
+  (Consulta A) y ejecutar el DDL de la migración.
+- **Condición exacta:** los tres valores deben ser **idénticos a la Consulta A**
+  — no a "13", no al histórico, a **A**. Cualquier diferencia en
+  `pedidos_con_web_order_id`, `web_orders_importados` o
+  `importados_durante_congelamiento` respecto a A → **DETENERSE**. El
+  congelamiento se rompió entre A y B; no continuar con la migración hasta
+  entender qué entró.
+
+#### Consulta C — Verificación previa a levantar el congelamiento
+
+Misma consulta, mismo `<FECHA_HORA_INICIO_CONGELAMIENTO>`:
+
+```sql
+select
+  (select count(*) from public.orders
+     where data ->> 'webOrderId' is not null
+       and data ->> 'webOrderId' <> '')                    as pedidos_con_web_order_id,
+  (select count(*) from public.web_orders
+     where status = 'imported')                            as web_orders_importados,
+  (select count(*) from public.web_orders
+     where status = 'imported'
+       and approved_at > '<FECHA_HORA_INICIO_CONGELAMIENTO>'::timestamptz)
+                                                           as importados_durante_congelamiento;
+```
+
+- **Propósito:** confirmar que, durante todo el intervalo del congelamiento, no
+  entró ningún pedido **no controlado**.
+- **Condición exacta:** cualquier diferencia respecto a la Consulta A debe
+  **explicarse por completo** por una de estas dos causas, y ninguna otra:
+  1. La **prueba controlada autorizada** de §8.5 (que deliberadamente crea
+     un pedido con `webOrderId` y marca un `web_order` como `imported`) —
+     en ese caso, `pedidos_con_web_order_id` y `web_orders_importados` subirán
+     en exactamente 1 cada uno, o
+  2. Ninguna otra causa. Si hay una diferencia que no corresponde a la prueba
+     controlada, **no levantar el congelamiento** — investigar primero.
+- **`importados_durante_congelamiento`:** su valor esperado depende de si ya se
+  corrió la prueba controlada. Si se corrió, debe ser exactamente **1** (el
+  `web_order` de la prueba). Si no se ha corrido ninguna prueba todavía, debe
+  ser **0**. Cualquier otro valor → **no levantar el congelamiento**.
+
+**Regla general para las tres consultas:** ninguna se evalúa contra el número
+"13" como si fuera una meta fija. Se evalúan **una contra otra** (A es la
+referencia de B y C) y, solo en la primera corrida, A se contrasta contra el
+histórico documentado como una señal de alerta temprana, no como un bloqueo.
 
 Complementariamente, la validación §3.7 (cero duplicados de `webOrderId`) debe
-seguir dando 0 filas en todo momento.
+seguir dando 0 filas en todo momento, en las tres corridas.
 
 ### 8.4 Cuándo se levanta
 
@@ -618,20 +722,83 @@ El congelamiento se levanta **solo** cuando se cumplen las cuatro condiciones:
    versión y el `CACHE_NAME` bumpeados según la regla 4 del proyecto).
 2. **El frontend nuevo llama a la RPC** y ya no ejecuta el PATCH independiente ni
    guarda nada local antes de la confirmación.
-3. **Se probó una importación real de punta a punta** en producción, con un pedido
-   web de verdad, y se verificó: un solo pedido creado, inventario descontado una
-   sola vez, `web_orders` con `processed_order_id`/`processed_at`/`processed_by`
-   poblados.
+3. **Se corrió la prueba controlada de §8.5 y cumplió TODOS sus criterios de
+   éxito** — no solo "se probó", sino que se verificó cada uno de los 15 puntos
+   de §8.5.
 4. **José lo declara levantado** y lo anota abajo.
 
 | Campo | Valor |
 |---|---|
 | Fecha/hora de inicio del congelamiento | |
 | Francisco avisado (sí/no, cómo) | |
-| Conteo base §8.3 al iniciar | |
-| Conteo §8.3 al levantar | |
+| Consulta A — línea base real (los 3 valores) | |
+| Consulta A vs. valor histórico esperado: ¿coincide? (si no, explicación) | |
+| Consulta B — justo antes de migrar (¿idéntica a A?) | |
+| Consulta C — antes de levantar (los 3 valores) | |
+| Consulta C vs. A: diferencia explicada por prueba controlada §8.5 (sí/no) | |
 | Fecha/hora de levantamiento | |
 | Quién lo levantó | |
+
+---
+
+### 8.5 CRITERIOS DE ÉXITO — PRUEBA CONTROLADA
+
+**Esta prueba requiere autorización separada, explícita y previa a ejecutarla.**
+No forma parte de las validaciones de solo lectura del resto de este documento:
+**escribe datos reales** — crea un cliente (si hace falta), un pedido, descuenta
+inventario y marca un `web_order` como `imported`. Nada de esto se ejecuta como
+parte del pre-vuelo ni de este checklist; se ejecuta solo cuando, en el momento
+de Checkpoint 4, alguien lo autorice explícitamente.
+
+#### La prueba se considera APROBADA solo si se cumplen los 15 puntos:
+
+1. Se procesó **un único** `web_order` autorizado específicamente para la
+   prueba (no uno elegido al azar de los 13 históricos).
+2. Se creó **exactamente un** `order` nuevo.
+3. El `order` nuevo contiene el **`webOrderId` correcto** dentro de `data`.
+4. `web_orders.processed_order_id` quedó poblado con el **id del `order` creado**
+   en el punto 2 (no vacío, no de otro pedido).
+5. `web_orders.processed_at` quedó poblado (no `null`).
+6. `web_orders.processed_by` quedó poblado con **el usuario correcto** (el
+   `auth.uid()` de quien ejecutó la prueba, vía `is_admin()`).
+7. El `status` del `web_order` quedó en el valor esperado por el diseño
+   (`imported`).
+8. Los **productos y cantidades** del `order` coinciden con los del `web_order`
+   de origen (mismo `productId`, misma `qty` por línea).
+9. El **total** del `order` coincide con el cálculo esperado según el diseño de
+   la RPC (`web_orders.total`, autoritativo — ver `2026-07-24_DISENO_import_web_order.md`).
+10. El **inventario disminuye exactamente una vez** por cada producto
+    involucrado (verificar `inventory.data->>'stock'` antes y después).
+11. **No se crean clientes duplicados** — si el cliente ya existía por
+    teléfono normalizado, se reutiliza; si no existía, se crea uno solo.
+12. Un **segundo intento** con el **mismo** `web_order` (reintento manual de la
+    misma prueba) **no crea otro `order`**.
+13. Ese segundo intento devuelve el **resultado o error idempotente esperado**
+    según el diseño de la RPC (respuesta de "ya importado", no un error genérico
+    ni un nuevo pedido).
+14. La consulta de duplicados de `webOrderId` (§3.7) devuelve **cero filas**
+    después de la prueba.
+15. Los postchecks de permisos, índices, función y vista (§3.1 a §3.6) **siguen
+    pasando** después de la prueba, sin regresión.
+
+#### La prueba se considera FALLIDA si ocurre cualquiera de estos:
+
+- **Más de un `order` creado** para el mismo `web_order`.
+- **Inventario descontado dos veces** (o descontado para un producto que no
+  correspondía).
+- `processed_order_id` **incorrecto o nulo** después de una importación exitosa.
+- **Diferencia inesperada** en productos, cantidades o total respecto al
+  `web_order` de origen.
+- El **segundo intento crea otra orden** en vez de comportarse de forma
+  idempotente.
+- **Cualquier cambio en registros no relacionados con la prueba** — por ejemplo,
+  otro `order`, otro cliente, u otra fila de `inventory` que no correspondía al
+  `web_order` de prueba.
+
+Si la prueba falla por cualquiera de estos motivos, **no levantar el
+congelamiento**, revertir el dato de prueba si corresponde (a mano, ya que es
+un dato real, no vía el rollback de esquema), y detener Checkpoint 4 hasta
+entender la causa.
 
 ---
 
