@@ -36,13 +36,32 @@ import {
   type MissionTask,
   type MissionLearning,
   type MissionStatus,
+  type TaskActionType,
 } from "../lib/missionControl";
 
 interface MissionControlProps {
   clients: Client[];
   orders: Order[];
   supa: SupaConfig;
+  setTab: (tab: string) => void;
 }
+
+// Sprint 02 — Quick Actions. Lista fija aprobada por José: solo pantallas
+// generales que no requieren contexto previo (nada de recibos ni registros
+// específicos). El id es el mismo `tab.id` real de App.tsx — no inventar uno
+// nuevo. No reutilizar el array `tabs` completo de App.tsx.
+const TASK_ACTION_TABS: readonly { id: string; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "clients", label: "Clientes" },
+  { id: "orders", label: "Pedidos" },
+  { id: "inventory", label: "Inventario" },
+  { id: "reorder", label: "Recordatorios" },
+  { id: "postdel", label: "Seguimiento" },
+  { id: "welcome", label: "Bienvenida" },
+  { id: "purchases", label: "Compras" },
+];
+
+type NewTaskActionKind = "none" | "tab" | "url";
 
 const STATUS_OPTIONS: readonly MissionStatus[] = ["En ejecución", "Esperando", "Bloqueado", "No iniciado", "Terminado"];
 const STATUS_COLORS: Record<MissionStatus, string> = {
@@ -94,7 +113,7 @@ const RoadmapCol = ({ title, items }: { title: string; items: string[] }) => (
   </div>
 );
 
-export const MissionControl: React.FC<MissionControlProps> = ({ clients, orders, supa }) => {
+export const MissionControl: React.FC<MissionControlProps> = ({ clients, orders, supa, setTab }) => {
   const isMobile = useIsMobile();
   const today = useMemo(() => getCaliforniaDateStr(), []);
 
@@ -113,6 +132,9 @@ export const MissionControl: React.FC<MissionControlProps> = ({ clients, orders,
   const [newTaskText, setNewTaskText] = useState("");
   const [taskError, setTaskError] = useState<string | null>(null);
   const [addingTask, setAddingTask] = useState(false);
+  const [newTaskActionKind, setNewTaskActionKind] = useState<NewTaskActionKind>("none");
+  const [newTaskTabTarget, setNewTaskTabTarget] = useState(TASK_ACTION_TABS[0].id);
+  const [newTaskUrlTarget, setNewTaskUrlTarget] = useState("");
 
   const [newLearningText, setNewLearningText] = useState("");
   const [learningError, setLearningError] = useState<string | null>(null);
@@ -171,12 +193,42 @@ export const MissionControl: React.FC<MissionControlProps> = ({ clients, orders,
 
   const handleAddTask = async () => {
     if (!newTaskText.trim() || addingTask) return;
-    setAddingTask(true); setTaskError(null);
-    const r = await addTask(supa, today, newTaskText);
+    setTaskError(null);
+
+    let action: { type: TaskActionType; target: string } | null = null;
+    if (newTaskActionKind === "tab") {
+      action = { type: "tab", target: newTaskTabTarget };
+    } else if (newTaskActionKind === "url") {
+      const trimmedUrl = newTaskUrlTarget.trim();
+      if (!/^https?:\/\/.+/.test(trimmedUrl)) {
+        setTaskError("El enlace debe empezar con https:// o http://");
+        return;
+      }
+      action = { type: "url", target: trimmedUrl };
+    }
+
+    setAddingTask(true);
+    const r = await addTask(supa, today, newTaskText, action);
     setAddingTask(false);
     if (!r.ok) { setTaskError(r.error); return; }
     if (r.data) setTasks(prev => [...prev, r.data as MissionTask]);
     setNewTaskText("");
+    setNewTaskActionKind("none");
+    setNewTaskTabTarget(TASK_ACTION_TABS[0].id);
+    setNewTaskUrlTarget("");
+  };
+
+  /** Sprint 02 — Quick Actions. "tab" valida contra la lista fija antes de
+   *  navegar (defensa extra aunque el formulario ya restringe el valor);
+   *  "url" siempre abre con noopener,noreferrer. */
+  const handleOpenTask = (t: MissionTask) => {
+    if (t.action_type === "tab" && t.action_target) {
+      if (TASK_ACTION_TABS.some(opt => opt.id === t.action_target)) setTab(t.action_target);
+      return;
+    }
+    if (t.action_type === "url" && t.action_target) {
+      window.open(t.action_target, "_blank", "noopener,noreferrer");
+    }
   };
 
   const handleToggleTask = async (t: MissionTask) => {
@@ -273,16 +325,36 @@ export const MissionControl: React.FC<MissionControlProps> = ({ clients, orders,
     <ST>Tareas de hoy {tasks.length > 0 && <span style={{ fontSize: 12, fontWeight: 400, color: "#999" }}>({doneCount}/{tasks.length} — {progressPct}%)</span>}</ST>
     {tasks.length > 0 && <div style={{ background: "#eee", borderRadius: 4, height: 6, marginBottom: 10, overflow: "hidden" }}><div style={{ background: "#1B7340", height: "100%", width: `${progressPct}%`, transition: "width .2s" }} /></div>}
     {tasks.map(t => (
-      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
-        <input type="checkbox" checked={t.status === "done"} onChange={() => handleToggleTask(t)} style={{ width: 16, height: 16, cursor: "pointer" }} />
-        <span style={{ flex: 1, fontSize: 14, textDecoration: t.status === "done" ? "line-through" : "none", color: t.status === "done" ? "#aaa" : "#333" }}>{t.text}</span>
-        <button onClick={() => handleDeleteTask(t)} title="Eliminar" style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14 }}>✕</button>
+      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #f0f0f0", minWidth: 0 }}>
+        <input type="checkbox" checked={t.status === "done"} onChange={() => handleToggleTask(t)} style={{ width: 16, height: 16, cursor: "pointer", flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, textDecoration: t.status === "done" ? "line-through" : "none", color: t.status === "done" ? "#aaa" : "#333", overflowWrap: "break-word" }}>{t.text}</span>
+        {t.action_type && t.action_target && (
+          <button onClick={() => handleOpenTask(t)} title="Abrir" style={{ flexShrink: 0, background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 6, color: "#555", cursor: "pointer", fontSize: 12, padding: "4px 8px" }}>Abrir</button>
+        )}
+        <button onClick={() => handleDeleteTask(t)} title="Eliminar" style={{ flexShrink: 0, background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14 }}>✕</button>
       </div>
     ))}
     {tasks.length < 3 ? (
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-        <input value={newTaskText} onChange={e => setNewTaskText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddTask(); }} placeholder={`Agregar tarea (${tasks.length}/3)`} style={{ flex: 1, padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />
-        <Btn small primary onClick={handleAddTask} disabled={addingTask || !newTaskText.trim()}>+ Agregar</Btn>
+      <div style={{ marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={newTaskText} onChange={e => setNewTaskText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddTask(); }} placeholder={`Agregar tarea (${tasks.length}/3)`} style={{ flex: 1, padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />
+          <Btn small primary onClick={handleAddTask} disabled={addingTask || !newTaskText.trim()}>+ Agregar</Btn>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={newTaskActionKind} onChange={e => setNewTaskActionKind(e.target.value as NewTaskActionKind)} style={{ padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}>
+            <option value="none">Sin acción</option>
+            <option value="tab">Abrir pestaña del CRM</option>
+            <option value="url">Abrir enlace externo</option>
+          </select>
+          {newTaskActionKind === "tab" && (
+            <select value={newTaskTabTarget} onChange={e => setNewTaskTabTarget(e.target.value)} style={{ padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}>
+              {TASK_ACTION_TABS.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
+            </select>
+          )}
+          {newTaskActionKind === "url" && (
+            <input value={newTaskUrlTarget} onChange={e => setNewTaskUrlTarget(e.target.value)} placeholder="https://..." style={{ flex: 1, minWidth: 140, padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }} />
+          )}
+        </div>
       </div>
     ) : <div style={{ fontSize: 12, color: "#999", marginTop: 8 }}>Ya tienes 3 tareas — el máximo del día.</div>}
     {taskError && <div style={{ fontSize: 12, color: "#C41E3A", marginTop: 6 }}>⚠️ {taskError}</div>}

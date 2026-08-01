@@ -950,7 +950,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.28.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.29.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -975,7 +975,7 @@ export default function App() {
         </div>}</div>
       {!isMobile && <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div>}</div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
-      {tab === "mission" && currentUser?.role === "admin" && <MissionControl clients={clients} orders={orders} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
+      {tab === "mission" && currentUser?.role === "admin" && <MissionControl clients={clients} orders={orders} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} setTab={setTab} />}
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} calcWeeks={calcWeeks} />}
       {tab === "clients" && <Clients
         clients={clients}

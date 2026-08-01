@@ -75,12 +75,21 @@ export interface MissionControlState {
 
 export type TaskStatus = "pending" | "done";
 
+/** Sprint 02 — Quick Actions. Lista fija de pestañas válidas para
+ *  action_type="tab" (ver MissionControl.tsx TASK_ACTION_TABS). No se
+ *  reutiliza el array `tabs` completo de App.tsx a propósito — solo se
+ *  permiten pantallas que no requieren contexto previo (nada de recibos ni
+ *  registros específicos). */
+export type TaskActionType = "tab" | "url";
+
 export interface MissionTask {
   id: string;
   task_date: string;
   position: number;
   text: string;
   status: TaskStatus;
+  action_type: TaskActionType | null;
+  action_target: string | null;
   created_at: string;
 }
 
@@ -144,8 +153,15 @@ export const fetchTasksForDate = async (supa: SupaConfig, dateStr: string): Prom
 };
 
 /** Crea una tarea del día. Rechaza con mensaje claro si ya hay 3 — sin
- *  trigger SQL, la regla vive aquí (capa de acceso a datos), como se pidió. */
-export const addTask = async (supa: SupaConfig, dateStr: string, text: string): Promise<Result<MissionTask | undefined>> => {
+ *  trigger SQL, la regla vive aquí (capa de acceso a datos), como se pidió.
+ *  `action` es opcional (Sprint 02 — Quick Actions): la acción de una tarea
+ *  solo se define al crearla, no hay edición posterior en este sprint. */
+export const addTask = async (
+  supa: SupaConfig,
+  dateStr: string,
+  text: string,
+  action?: { type: TaskActionType; target: string } | null
+): Promise<Result<MissionTask | undefined>> => {
   if (!supa.enabled) return { ok: false, error: "Supabase no configurado" };
   const trimmed = text.trim();
   if (!trimmed) return { ok: false, error: "La tarea no puede estar vacía" };
@@ -160,6 +176,8 @@ export const addTask = async (supa: SupaConfig, dateStr: string, text: string): 
       position: existing.length,
       text: trimmed,
       status: "pending",
+      action_type: action?.type ?? null,
+      action_target: action?.target ?? null,
       created_at: new Date().toISOString(),
     };
     const r = await fetch(`${supa.url}/rest/v1/mission_control_tasks`, {
