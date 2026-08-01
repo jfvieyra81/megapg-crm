@@ -67,3 +67,20 @@ CRM; darle acceso = insertar su fila (role='rep') y las políticas lo cubren sol
 
 Los SQL que José debe correr en Supabase se guardan en `supabase/*.sql`
 con fecha, y se le dan con instrucciones de pegar-y-Run (él no escribe SQL).
+
+## Mission Control — historial de sprints
+
+**Sprint 01 (MVP admin-only): COMPLETADO 2026-07-31.** Landing diario con
+misión/sprint/proyecto activos, hasta 3 tareas del día, bloqueadores, metas
+semanales, roadmap Ahora/Después/Más adelante, métricas rápidas y aprendizaje
+del día. Smoke test en producción confirmado por José.
+
+**Sprint 02 (Quick Actions): COMPLETADO 2026-08-01.** Cada tarea puede llevar
+una acción opcional definida solo al crearla (`action_type`: `tab`|`url`,
+`action_target`), con botón "Abrir" que cambia de pestaña (lista fija:
+Dashboard, Clientes, Pedidos, Inventario, Recordatorios, Seguimiento,
+Bienvenida, Compras) o abre un enlace externo validado (`http(s)://`). Ver
+`supabase/2026-08-01_mission_control_quick_actions.sql`. Sin edición posterior
+de la acción de una tarea ya creada (deuda aceptada del sprint). Merge a
+`main` + deploy a producción (commit `ae2e728`) verificado por José con smoke
+test manual en producción — passed.
