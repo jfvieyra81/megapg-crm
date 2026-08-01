@@ -52,6 +52,7 @@ import { Reorders } from "./components/Reorders";
 import { LoginScreen, AccessDeniedScreen } from "./components/Auth";
 import { Announcements } from "./components/Announcements";
 import { WebOrders } from "./components/WebOrders";
+import { MissionControl } from "./components/MissionControl";
 import { PRODUCTS, pF, TIER_DISC, ST_CLR } from "./lib/catalog";
 import type { InventoryItem } from "./lib/catalog";
 import { WaBtn, cleanPhone, waLink, waOrder, waPayment, waReceipt } from "./lib/whatsapp";
@@ -502,6 +503,9 @@ export default function App() {
   const [ro, setRo] = useState(null); const [resetConf, setResetConf] = useState(null); const resetRef = useRef(null);
   const [showVisitForm, setShowVisitForm] = useState(false); const [editVisit, setEditVisit] = useState(null);
   const stateRef = useRef(initData);
+  // Mission Control (Block MC.1): solo se fuerza el tab de aterrizaje una vez,
+  // al primer authState "ready" — después el usuario navega libre.
+  const landingSetRef = useRef(false);
 
   // === D1 (v5.17): Cloud sync state ===
   const [cloudStatus, setCloudStatus] = useState(() => {
@@ -578,6 +582,17 @@ export default function App() {
     // Hard reload to flush all in-memory state
     setTimeout(() => window.location.reload(), 100);
   };
+
+  // Mission Control (Block MC.1): landing inicial — admin entra a "mission",
+  // el resto de roles se queda en "dashboard" (default de useState). Solo se
+  // fuerza una vez por sesión (landingSetRef) para no pelear con la
+  // navegación manual del usuario después.
+  useEffect(() => {
+    if (authState === "ready" && !landingSetRef.current) {
+      landingSetRef.current = true;
+      if (currentUser?.role === "admin") setTab("mission");
+    }
+  }, [authState, currentUser]);
 
   const sv = useCallback((type, data) => {
     const prev = stateRef.current[type];
@@ -900,7 +915,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tabs = [{ id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "fieldorder", l: "Pedido campo" },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  // Mission Control (Block MC.1): pestaña admin-only, primera en la lista.
+  // No depende solo de esconder el nav item — la RLS (is_admin()) bloquea el
+  // acceso real en Supabase; esto es únicamente para no mostrar el tab.
+  const isAdmin = currentUser?.role === "admin";
+  const tabs = [...(isAdmin ? [{ id: "mission", l: "Mission Control" }] : []), { id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "fieldorder", l: "Pedido campo" },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
 
   // Shell móvil: el hook debe llamarse ANTES de los returns del auth gate
   // (si no, el orden de hooks cambia entre renders y React truena).
@@ -931,7 +950,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.27.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.28.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -956,6 +975,7 @@ export default function App() {
         </div>}</div>
       {!isMobile && <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div>}</div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
+      {tab === "mission" && currentUser?.role === "admin" && <MissionControl clients={clients} orders={orders} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
       {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} calcWeeks={calcWeeks} />}
       {tab === "clients" && <Clients
         clients={clients}
@@ -1016,6 +1036,6 @@ export default function App() {
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><Btn onClick={() => setShowMigrateModal(false)}>Cerrar</Btn></div>
       </div>}
     </Modal>}
-    {isMobile && <BottomNav active={tab} onSelect={setTab} tabs={tabs} />}
+    {isMobile && <BottomNav active={tab} onSelect={setTab} tabs={tabs} homeTabId={isAdmin ? "mission" : "dashboard"} />}
   </div>;
 }

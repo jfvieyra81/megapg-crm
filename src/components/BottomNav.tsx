@@ -8,18 +8,20 @@ type Props = {
   active: string;
   onSelect: (id: string) => void;
   tabs: Tab[];
+  /** Destino del ícono "Inicio". "mission" para admin (Mission Control es el
+   *  landing), "dashboard" para el resto — Dashboard cae automáticamente en
+   *  la hoja "Más" cuando no es el home (ver `rest` abajo). */
+  homeTabId?: string;
 };
 
 // Destinos primarios de la barra inferior. Los ids deben coincidir con
-// los del array `tabs` de App.tsx.
-const PRIMARY: { id: string; label: string; icon: ReactElement; fab?: boolean }[] = [
-  { id: "dashboard", label: "Inicio", icon: iconHome() },
+// los del array `tabs` de App.tsx. "Inicio" es paramétrico (homeTabId).
+const primaryFor = (homeTabId: string): { id: string; label: string; icon: ReactElement; fab?: boolean }[] => [
+  { id: homeTabId, label: "Inicio", icon: iconHome() },
   { id: "clients", label: "Clientes", icon: iconUsers() },
   { id: "fieldorder", label: "Pedido", icon: iconPlus(), fab: true },
   { id: "orders", label: "Pedidos", icon: iconReceipt() },
 ];
-
-const PRIMARY_IDS = new Set(PRIMARY.map(p => p.id));
 
 function iconHome() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" /></svg>;
@@ -41,8 +43,10 @@ function iconDots() {
  * Barra de navegación inferior para celular: 4 destinos primarios + botón
  * "Más" que abre una hoja con el resto de las pestañas de App.tsx.
  */
-export function BottomNav({ active, onSelect, tabs }: Props) {
+export function BottomNav({ active, onSelect, tabs, homeTabId = "dashboard" }: Props) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const PRIMARY = primaryFor(homeTabId);
+  const PRIMARY_IDS = new Set(PRIMARY.map(p => p.id));
   const rest = tabs.filter(t => !PRIMARY_IDS.has(t.id));
   const moreActive = !PRIMARY_IDS.has(active);
 
