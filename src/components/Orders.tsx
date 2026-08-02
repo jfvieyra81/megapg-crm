@@ -26,7 +26,7 @@ import {
   casesFor,
   type InventoryItem,
 } from "../lib/catalog";
-import { buildOrder, applyInventory } from "../lib/business/orders";
+import { buildOrder } from "../lib/business/orders";
 import { fmt, fmtD, fmtPct } from "../lib/format";
 import { WaBtn, waOrder, waPayment } from "../lib/whatsapp";
 import { Btn, Modal, Inp, Badge } from "./ui";
@@ -58,15 +58,29 @@ interface ReturnFormState {
 // ============================================================
 // Component
 // ============================================================
+interface ApplyInventoryResult {
+  ok: boolean;
+  error?: string;
+}
+
 interface OrdersProps {
   clients: Client[];
   orders: Order[];
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
+  /** Sprint 2.6: para admin, el inventario real; para rep, la proyección
+   *  segura (rep_inventory_stock — sin costo). Mismo shape en ambos casos. */
   inventory: InventoryItem[];
-  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   saveAll: (type: string, data: unknown) => void;
   setTab: (tab: string) => void;
   setRO: (order: Order | null) => void;
+  /** Sprint 2.6: único camino para descontar inventario al crear un pedido
+   *  (admin y rep) — reemplaza el setInventory() directo de antes. */
+  applyOrderInventory: (orderId: string) => Promise<ApplyInventoryResult>;
+  /** Refresca la fuente de stock después de aplicar inventario (pull completo
+   *  para admin, rep_inventory_stock() para rep). */
+  refreshStock: () => Promise<void> | void;
+  /** true para role='rep' (Sprint 2.6): oculta costo/utilidad. */
+  hideFinancials?: boolean;
 }
 
 const buildEmptyForm = (): OrderForm => ({
@@ -82,10 +96,12 @@ export const Orders = ({
   orders,
   setOrders,
   inventory,
-  setInventory,
   saveAll,
   setTab,
   setRO,
+  applyOrderInventory,
+  refreshStock,
+  hideFinancials,
 }: OrdersProps) => {
   // Bloque móvil 2.2: en celular cada fila se apila como tarjeta.
   const isMobile = useIsMobile();
@@ -165,7 +181,12 @@ export const Orders = ({
     return warnings;
   };
 
-  const saveO = () => {
+  // Sprint 2.6: el pedido se guarda de inmediato (igual que antes); el
+  // descuento de inventario pasa por apply_order_inventory() — único camino,
+  // admin y rep. Si falla (red o stock insuficiente), el pedido queda
+  // marcado inventoryPending y aparece "Reintentar" en la lista — nunca se
+  // deshace el pedido ya guardado.
+  const saveO = async () => {
     if (!form.clientId || form.items.every(it => !it.productId)) return;
     const warnings = getStockWarnings();
     if (warnings.length > 0 && !stockAck) {
@@ -180,16 +201,42 @@ export const Orders = ({
       items: form.items,
       disc,
     });
-    const ni = applyInventory(inventory, order.items);
     setOrders(prev => {
       const n = [...prev, order];
       saveAll("orders", n);
       return n;
     });
-    setInventory(ni);
-    saveAll("inventory", ni);
     setSf(false);
     setStockAck(false);
+    const r = await applyOrderInventory(order.id);
+    if (r.ok) {
+      await refreshStock();
+    } else {
+      setOrders(prev => {
+        const n = prev.map(o => (o.id === order.id ? { ...o, inventoryPending: true } : o));
+        saveAll("orders", n);
+        return n;
+      });
+      alert(
+        `Pedido guardado, pero el inventario no se pudo actualizar todavía: ${
+          r.error || "error desconocido"
+        }. Usa "Reintentar inventario" en el pedido.`
+      );
+    }
+  };
+
+  const retryInventory = async (orderId: string) => {
+    const r = await applyOrderInventory(orderId);
+    if (r.ok) {
+      setOrders(prev => {
+        const n = prev.map(o => (o.id === orderId ? { ...o, inventoryPending: false } : o));
+        saveAll("orders", n);
+        return n;
+      });
+      await refreshStock();
+    } else {
+      alert(`Todavía no se pudo actualizar el inventario: ${r.error || "error desconocido"}`);
+    }
   };
 
   const upSt = (id: string, st: OrderStatus) =>
@@ -346,6 +393,9 @@ export const Orders = ({
                 {hasReturn && (
                   <Badge text={`↩ -${fmt(o.returnedAmount)}`} color="#C41E3A" />
                 )}
+                {o.inventoryPending && (
+                  <Badge text="⚠ Inventario pendiente" color="#D35400" />
+                )}
               </div>
               <div
                 style={{
@@ -358,7 +408,7 @@ export const Orders = ({
               >
                 <div style={{ textAlign: isMobile ? "left" : "right", marginRight: isMobile ? "auto" : 4 }}>
                   <div style={{ fontWeight: 700 }}>{fmt(o.total)}</div>
-                  <div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div>
+                  {!hideFinancials && <div style={{ fontSize: 11, color: "#1B7340" }}>+{fmt(prof)}</div>}
                 </div>
                 <select
                   value={o.status}
@@ -416,6 +466,15 @@ export const Orders = ({
                     }}
                   >
                     ↩ {hasReturn ? "Edit" : "Devol"}
+                  </Btn>
+                )}
+                {o.inventoryPending && (
+                  <Btn
+                    small
+                    onClick={() => retryInventory(o.id)}
+                    style={{ fontSize: 10, background: "#D35400", color: "#fff" }}
+                  >
+                    Reintentar inventario
                   </Btn>
                 )}
                 <Btn
@@ -664,12 +723,14 @@ export const Orders = ({
                 {fmt(calcT())}
               </div>
             </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12, color: "#777" }}>Cost: {fmt(calcC())}</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#1B7340" }}>
-                Profit: {fmt(calcT() - calcC())}
+            {!hideFinancials && (
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 12, color: "#777" }}>Cost: {fmt(calcC())}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#1B7340" }}>
+                  Profit: {fmt(calcT() - calcC())}
+                </div>
               </div>
-            </div>
+            )}
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Btn

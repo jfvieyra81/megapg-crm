@@ -17,7 +17,6 @@ import { PRODUCTS, TIER_DISC, unitPrice, bagEnabled, type InventoryItem } from "
 import {
   type DraftItem,
   buildOrder,
-  applyInventory,
   stockWarnings,
   orderTotal,
 } from "../lib/business/orders";
@@ -27,15 +26,26 @@ import { Btn, Badge, Inp } from "./ui";
 
 const TIER_CLR: Record<string, string> = { Lista: "#888", Bronce: "#996633", Plata: "#1A5276", Oro: "#1B7340" };
 
+interface ApplyInventoryResult {
+  ok: boolean;
+  error?: string;
+}
+
 interface FieldOrderProps {
   clients: Client[];
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
+  /** Sprint 2.6: para admin, el inventario real; para rep, la proyección
+   *  segura (rep_inventory_stock — sin costo). Mismo shape en ambos casos. */
   inventory: InventoryItem[];
-  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   saveAll: (type: string, data: unknown) => void;
   representativeId: string | null;
   setTab: (tab: string) => void;
   setRO: (order: Order | null) => void;
+  /** Sprint 2.6: único camino para descontar inventario al crear un pedido
+   *  (admin y rep) — reemplaza el setInventory() directo de antes. */
+  applyOrderInventory: (orderId: string) => Promise<ApplyInventoryResult>;
+  /** Refresca la fuente de stock después de aplicar inventario. */
+  refreshStock: () => Promise<void> | void;
 }
 
 type Line = { qty: number; unit: SaleUnit };
@@ -44,11 +54,12 @@ export const FieldOrder = ({
   clients,
   setOrders,
   inventory,
-  setInventory,
   saveAll,
   representativeId,
   setTab,
   setRO,
+  applyOrderInventory,
+  refreshStock,
 }: FieldOrderProps) => {
   const [clientId, setClientId] = useState("");
   const [clientSearch, setClientSearch] = useState("");
@@ -58,6 +69,8 @@ export const FieldOrder = ({
   const [notes, setNotes] = useState("");
   const [stockAck, setStockAck] = useState(false);
   const [saved, setSaved] = useState<Order | null>(null);
+  const [invState, setInvState] = useState<"idle" | "applying" | "ok" | "error">("idle");
+  const [invError, setInvError] = useState<string | null>(null);
 
   const cl = clients.find(c => c.id === clientId);
   const disc = cl ? TIER_DISC[cl.tier] || 0 : 0;
@@ -100,7 +113,10 @@ export const FieldOrder = ({
     ? PRODUCTS.filter(p => `${p.name} ${p.sku}`.toLowerCase().includes(pq))
     : PRODUCTS;
 
-  const save = () => {
+  // Sprint 2.6: el pedido se guarda de inmediato; el descuento de inventario
+  // pasa por apply_order_inventory() — único camino, admin y rep. El pedido
+  // ya guardado nunca se deshace si el inventario falla.
+  const save = async () => {
     if (!clientId || draftItems.length === 0) return;
     if (warnings.length > 0 && !stockAck) {
       setStockAck(true);
@@ -114,16 +130,47 @@ export const FieldOrder = ({
       items: draftItems,
       disc,
     });
-    const ni = applyInventory(inventory, order.items);
     setOrders(prev => {
       const n = [...prev, order];
       saveAll("orders", n);
       return n;
     });
-    setInventory(ni);
-    saveAll("inventory", ni);
     setSaved(order);
     setStockAck(false);
+    setInvState("applying");
+    setInvError(null);
+    const r = await applyOrderInventory(order.id);
+    if (r.ok) {
+      setInvState("ok");
+      await refreshStock();
+    } else {
+      setInvState("error");
+      setInvError(r.error || "error desconocido");
+      setOrders(prev => {
+        const n = prev.map(o => (o.id === order.id ? { ...o, inventoryPending: true } : o));
+        saveAll("orders", n);
+        return n;
+      });
+    }
+  };
+
+  const retryInventory = async () => {
+    if (!saved) return;
+    setInvState("applying");
+    setInvError(null);
+    const r = await applyOrderInventory(saved.id);
+    if (r.ok) {
+      setInvState("ok");
+      setOrders(prev => {
+        const n = prev.map(o => (o.id === saved.id ? { ...o, inventoryPending: false } : o));
+        saveAll("orders", n);
+        return n;
+      });
+      await refreshStock();
+    } else {
+      setInvState("error");
+      setInvError(r.error || "error desconocido");
+    }
   };
 
   const reset = () => {
@@ -134,6 +181,8 @@ export const FieldOrder = ({
     setClientId("");
     setClientSearch("");
     setProdSearch("");
+    setInvState("idle");
+    setInvError(null);
   };
 
   // ============================================================
@@ -151,6 +200,19 @@ export const FieldOrder = ({
           </div>
           <div style={{ fontSize: 11, color: "#777", marginTop: 2 }}>Pedido #{saved.id.slice(-6).toUpperCase()} · pendiente</div>
         </div>
+        {invState === "applying" && (
+          <div style={{ fontSize: 12, color: "#1A5276", textAlign: "center", marginBottom: 12 }}>
+            ⏳ Inventario pendiente de verificación...
+          </div>
+        )}
+        {invState === "error" && (
+          <div style={{ background: "#FDF2E9", border: "1px solid #D35400", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 12, color: "#D35400" }}>
+            ⚠ Inventario pendiente de verificación — {invError}
+            <div style={{ marginTop: 6 }}>
+              <Btn small onClick={retryInventory} style={{ background: "#D35400", color: "#fff" }}>Reintentar / Verificar</Btn>
+            </div>
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {cl?.phone
             ? <WaBtn phone={cl.phone} msg={waOrder(saved, cl, lang)} label="Enviar pedido por WhatsApp" />
