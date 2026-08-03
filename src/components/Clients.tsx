@@ -138,6 +138,13 @@ interface ClientsProps {
   syncClientToPublicStores: (client: Client, orders: Order[]) => Promise<SyncResult>;
   syncAllPublicStores: (clients: Client[], orders: Order[]) => Promise<BulkSyncResult>;
   uploadStorePhoto: (file: File, clientId: string) => Promise<string | null>;
+
+  /** Sprint 2.6: id del representante logueado si role='rep' (null/undefined
+   *  para admin). Cuando está presente, se oculta el selector de
+   *  representante y se autoasigna — RLS ya rechazaría cualquier otro valor,
+   *  así que dejar el selector visible solo produciría guardados fallidos
+   *  silenciosos. */
+  currentRepresentativeId?: string | null;
 }
 
 // ============================================================
@@ -153,6 +160,7 @@ export const Clients: React.FC<ClientsProps> = ({
   syncClientToPublicStores,
   syncAllPublicStores,
   uploadStorePhoto,
+  currentRepresentativeId,
 }) => {
   // Bloque móvil 2.2: en celular cada fila se apila como tarjeta.
   const isMobile = useIsMobile();
@@ -189,7 +197,7 @@ export const Clients: React.FC<ClientsProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const openN = () => {
-    setForm(emptyForm);
+    setForm({ ...emptyForm, representativeId: currentRepresentativeId || "" });
     setEdit(null);
     setShowWebSection(false);
     setSf(true);
@@ -213,7 +221,14 @@ export const Clients: React.FC<ClientsProps> = ({
       form.showOnWebsite && !form.websitePermissionDate
         ? new Date().toISOString().slice(0, 10)
         : form.websitePermissionDate;
-    const cleanForm = { ...form, websitePermissionDate: permDate };
+    // Sprint 2.6: un rep nunca guarda un representativeId distinto al suyo —
+    // RLS lo rechazaría igual, pero forzarlo aquí evita un guardado local que
+    // luego se revierte solo al sincronizar.
+    const cleanForm = {
+      ...form,
+      websitePermissionDate: permDate,
+      representativeId: currentRepresentativeId || form.representativeId,
+    };
 
     let savedClient: Client | undefined;
     if (edit) {
@@ -505,16 +520,22 @@ export const Clients: React.FC<ClientsProps> = ({
             <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#1B7340", marginBottom: 6 }}>
               🧑‍💼 Representante asignado
             </label>
-            <select
-              value={form.representativeId || ""}
-              onChange={e => setForm(p => ({ ...p, representativeId: e.target.value }))}
-              style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginBottom: 8 }}
-            >
-              <option value="">— Cuenta directa de José (sin representante) —</option>
-              {(representatives || []).map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
+            {currentRepresentativeId ? (
+              <div style={{ fontSize: 13, color: "#1B7340", padding: "7px 10px", background: "#fff", border: "1px solid #ddd", borderRadius: 6, marginBottom: 8 }}>
+                Este cliente se asigna automáticamente a ti.
+              </div>
+            ) : (
+              <select
+                value={form.representativeId || ""}
+                onChange={e => setForm(p => ({ ...p, representativeId: e.target.value }))}
+                style={{ width: "100%", padding: "7px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginBottom: 8 }}
+              >
+                <option value="">— Cuenta directa de José (sin representante) —</option>
+                {(representatives || []).map(r => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            )}
             {form.representativeId && (
               <label style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: 8, background: "#FFF8E1", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
                 <input

@@ -325,12 +325,67 @@ const cloudDelete = async (table, ids) => {
   }
 };
 
+// === Sprint 2.6: RPCs — proyección segura de stock + descuento de inventario ===
+const cloudRpc = async (fn, args = {}) => {
+  if (!cloudEnabled) return { ok: false, error: "Supabase no configurado" };
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: authedHeaders(),
+      body: JSON.stringify(args),
+    });
+    const txt = await r.text();
+    let body = null;
+    try { body = txt ? JSON.parse(txt) : null; } catch {}
+    if (!r.ok) {
+      const errMsg = (body && (body.message || body.detail)) || txt.slice(0, 250) || `HTTP ${r.status}`;
+      return { ok: false, error: errMsg, code: body?.code, detail: body?.detail };
+    }
+    return { ok: true, data: body };
+  } catch (e) {
+    return { ok: false, error: e.message || "Network error" };
+  }
+};
+
+// Proyección segura de stock (rep_inventory_stock): sin costo, sin data completa.
+// Normaliza al mismo shape que ya usa toda la app ({productId, stock, lastRestock})
+// para que Orders/FieldOrder/Dashboard no necesiten saber de dónde vino.
+const repInventoryStock = async () => {
+  const r = await cloudRpc("rep_inventory_stock");
+  if (!r.ok || !Array.isArray(r.data)) return { ok: false, error: r.error, rows: [] };
+  return { ok: true, rows: r.data.map(x => ({ productId: x.product_id, stock: x.stock, lastRestock: x.last_restock })) };
+};
+
+// Único camino (admin + rep) para descontar inventario al crear un pedido.
+const applyOrderInventoryRpc = async (orderId) => cloudRpc("apply_order_inventory", { p_order_id: orderId });
+
 // === D2 (v5.18): Supabase Auth ===
 const AUTH_TOKEN_KEY = "ds-supabase-auth";
 const authStore = {
   get() { try { return JSON.parse(localStorage.getItem(AUTH_TOKEN_KEY) || "null"); } catch { return null; } },
   set(session) { try { localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session)); } catch {} },
   clear() { try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch {} }
+};
+
+// === Sprint 2.6: caché por identidad ===
+// localStorage["megapg-data"] es por navegador, no por cuenta. Si dos
+// identidades (admin y rep, o dos reps) usan el mismo dispositivo, sin esto
+// la segunda sesión podía ver residuos de la primera (mergeById es unión, no
+// reemplazo). CACHED_IDENTITY_KEY guarda el auth_user_id dueño del último
+// caché válido; si no coincide con la sesión actual, las tablas cloud-scoped
+// arrancan vacías ANTES del primer render (ver uso en App()).
+const CACHED_IDENTITY_KEY = "ds-cached-identity";
+const getCachedIdentity = () => { try { return localStorage.getItem(CACHED_IDENTITY_KEY); } catch { return null; } };
+const setCachedIdentity = (authUserId) => { try { authUserId ? localStorage.setItem(CACHED_IDENTITY_KEY, authUserId) : localStorage.removeItem(CACHED_IDENTITY_KEY); } catch {} };
+
+// Decodifica el `sub` (auth_user_id) de un JWT sin red — solo para comparar
+// identidad al arrancar, antes de que authGetUser() confirme la sesión real.
+const decodeJwtSub = (accessToken) => {
+  try {
+    const payload = accessToken.split(".")[1];
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json)?.sub || null;
+  } catch { return null; }
 };
 
 // Returns headers WITH Bearer = access_token if logged in, else Bearer = anon key
@@ -452,6 +507,21 @@ const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "f
 
 export default function App() {
   const saved = S.load();
+
+  // Sprint 2.6 (P0 caché entre identidades): si la sesión efectiva (persistida
+  // o recién llegada por magic link, aún sin parsear) no coincide con la
+  // identidad dueña del último caché, las tablas cloud-scoped arrancan vacías
+  // — antes del primer render, no después. visits/reminders/followups/
+  // welcomes/templates/campaign NO se tocan (siguen local-only sin cambios).
+  let identityChanged = false;
+  if (cloudEnabled) {
+    const persistedSession = authStore.get();
+    const hashSession = authParseHashTokens();
+    const effectiveSession = hashSession || persistedSession;
+    const sessionAuthUserId = effectiveSession?.access_token ? decodeJwtSub(effectiveSession.access_token) : null;
+    if (sessionAuthUserId && sessionAuthUserId !== getCachedIdentity()) identityChanged = true;
+  }
+
   const defaultCampaign = { tiers: ["Lista", "Bronce", "Plata", "Oro"], message: "", sentIds: [], withPhoneOnly: true };
   const defaultRepresentatives = [{
     id: REP_FRANCISCO_ID,
@@ -486,6 +556,19 @@ export default function App() {
   if (!initData.representatives.find(r => r.id === REP_FRANCISCO_ID)) initData.representatives = [defaultRepresentatives[0], ...initData.representatives];
   // Migrate: add commissions array (Deploy B)
   if (!initData.commissions) initData.commissions = [];
+
+  // Sprint 2.6: identidad distinta a la del caché → las 6 tablas cloud-scoped
+  // arrancan vacías (pullFromCloud las repuebla ya scoped a esta sesión).
+  // representatives se deja pasar por la migración de Francisco de arriba
+  // (placeholder sin datos reales) y luego pullFromCloud la reemplaza.
+  if (identityChanged) {
+    initData.clients = [];
+    initData.orders = [];
+    initData.representatives = defaultRepresentatives;
+    initData.commissions = [];
+    initData.inventory = [];
+    initData.purchases = [];
+  }
 
   const [tab, setTab] = useState("dashboard");
   const [clients, setClients] = useState(initData.clients);
@@ -614,36 +697,63 @@ export default function App() {
     }
   }, []);
 
-  // === Pull + fusión de la nube (unión por id; en conflicto gana la nube) ===
+  // === Pull de la nube ===
+  // Sprint 2.6 (P0 caché entre identidades): para role='admin' se mantiene la
+  // fusión por unión de siempre (resiliencia offline sin cambios). Para
+  // role='rep', clients/representatives/orders/commissions se REEMPLAZAN por
+  // la respuesta autorizada de la nube — la nube ya viene scoped por RLS
+  // (representative_id propio), así que unir arrastraría residuos de otra
+  // sesión. inventory/purchases NUNCA se descargan para rep (admin-only en
+  // RLS) — su stock llega por rep_inventory_stock() (ver refreshRepStock).
   const pullFromCloud = useCallback(async () => {
     if (!cloudEnabled) return;
     setCloudStatus("syncing");
+    const role = currentUserRef.current?.role;
+    const isRep = role === "rep";
     try {
       const [cR, oR, rR, mR, iR, pR] = await Promise.all([
         cloudDownload("clients"),
         cloudDownload("orders"),
         cloudDownload("representatives"),
         cloudDownload("commissions"),
-        cloudDownload("inventory"),
-        cloudDownload("purchases"),
+        isRep ? Promise.resolve({ ok: true, rows: [] }) : cloudDownload("inventory"),
+        isRep ? Promise.resolve({ ok: true, rows: [] }) : cloudDownload("purchases"),
       ]);
-      const errs = [cR, oR, rR, mR, iR, pR].filter(x => !x.ok).map(x => x.error);
+      const errs = [cR, oR, rR, mR, ...(isRep ? [] : [iR, pR])].filter(x => !x.ok).map(x => x.error);
       const cur = stateRef.current;
-      const nc = cR.ok ? mergeById(cur.clients || [], cR.rows) : (cur.clients || []);
-      const no = oR.ok ? mergeById(cur.orders || [], oR.rows) : (cur.orders || []);
-      const nr = rR.ok ? mergeById(cur.representatives || [], rR.rows) : (cur.representatives || []);
-      const nm = mR.ok ? mergeById(cur.commissions || [], mR.rows) : (cur.commissions || []);
-      const ni = iR.ok ? mergeByKey(cur.inventory || [], iR.rows, x => x && x.productId) : (cur.inventory || []);
-      const np = pR.ok ? mergeById(cur.purchases || [], pR.rows) : (cur.purchases || []);
+      const nc = cR.ok ? (isRep ? cR.rows : mergeById(cur.clients || [], cR.rows)) : (cur.clients || []);
+      const no = oR.ok ? (isRep ? oR.rows : mergeById(cur.orders || [], oR.rows)) : (cur.orders || []);
+      const nr = rR.ok ? (isRep ? rR.rows : mergeById(cur.representatives || [], rR.rows)) : (cur.representatives || []);
+      const nm = mR.ok ? (isRep ? mR.rows : mergeById(cur.commissions || [], mR.rows)) : (cur.commissions || []);
+      const ni = isRep ? [] : (iR.ok ? mergeByKey(cur.inventory || [], iR.rows, x => x && x.productId) : (cur.inventory || []));
+      const np = isRep ? [] : (pR.ok ? mergeById(cur.purchases || [], pR.rows) : (cur.purchases || []));
       setClients(nc); setOrders(no); setRepresentatives(nr); setCommissions(nm); setInventory(ni); setPurchases(np);
       stateRef.current = { ...cur, clients: nc, orders: no, representatives: nr, commissions: nm, inventory: ni, purchases: np };
       S.save({ ...stateRef.current, init: true });
       if (errs.length) { setCloudStatus("error"); setCloudError(errs[0]); }
-      else { setCloudStatus("synced"); setCloudError(null); }
+      else {
+        setCloudStatus("synced"); setCloudError(null);
+        const session = authStore.get();
+        const uid = session?.access_token ? decodeJwtSub(session.access_token) : null;
+        if (uid) setCachedIdentity(uid);
+      }
     } catch (e) {
       setCloudStatus("error"); setCloudError(e.message || "Pull fallo");
     }
   }, []);
+
+  // Sprint 2.6: stock para role='rep' — nunca via inventory (admin-only),
+  // siempre via la proyección segura. Normalizado al mismo shape que
+  // `inventory`, así Orders/FieldOrder/Dashboard no distinguen el origen.
+  const [repStock, setRepStock] = useState([]);
+  const refreshRepStock = useCallback(async () => {
+    if (!cloudEnabled) return;
+    const r = await repInventoryStock();
+    if (r.ok) setRepStock(r.rows);
+  }, []);
+  useEffect(() => {
+    if (cloudEnabled && authState === "ready" && currentUser?.role === "rep") refreshRepStock();
+  }, [authState, currentUser, refreshRepStock]);
 
   // Boton "Sincronizar": sube lo local (4 tablas) y luego baja + fusiona.
   const syncNow = useCallback(async () => {
@@ -919,7 +1029,19 @@ export default function App() {
   // No depende solo de esconder el nav item — la RLS (is_admin()) bloquea el
   // acceso real en Supabase; esto es únicamente para no mostrar el tab.
   const isAdmin = currentUser?.role === "admin";
-  const tabs = [...(isAdmin ? [{ id: "mission", l: "Mission Control" }] : []), { id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "fieldorder", l: "Pedido campo" },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  const allTabs = [...(isAdmin ? [{ id: "mission", l: "Mission Control" }] : []), { id: "dashboard", l: "Dashboard" },{ id: "clients", l: `Clients (${clients.length})` },{ id: "orders", l: `Orders (${orders.length})` },{ id: "fieldorder", l: "Pedido campo" },{ id: "weborders", l: `Web Inbox${webPendingCount > 0 ? ` (${webPendingCount})` : ""}` },{ id: "welcome", l: `Bienvenida${welcomesPending > 0 ? ` (${welcomesPending})` : ""}` },{ id: "reorder", l: `Recordatorios${reorderPending > 0 ? ` (${reorderPending})` : ""}` },{ id: "postdel", l: `Seguimiento${postdelPending > 0 ? ` (${postdelPending})` : ""}` },{ id: "anuncios", l: "Anuncios" },{ id: "inventory", l: "Inventory" },{ id: "purchases", l: "Purchases" },{ id: "reps", l: `Representantes (${representatives.length})` },{ id: "commissions", l: "Comisiones" },{ id: "reports", l: "P&L" },{ id: "receipt", l: "Receipt" },{ id: "field", l: "Field Intel" },{ id: "visits", l: `Visits (${visits.length})` },{ id: "analysis", l: "Export Intel" }];
+  // Sprint 2.6: navegación de rep reducida al set aprobado — el resto queda
+  // admin-only (además bloqueado en RLS y en el gate de render de abajo).
+  const REP_ALLOWED_TABS = ["dashboard", "clients", "orders", "fieldorder", "welcome", "reorder", "postdel", "visits", "receipt"];
+  const tabs = isAdmin ? allTabs : allTabs.filter(t => REP_ALLOWED_TABS.includes(t.id));
+
+  // Sprint 2.6: fuente de stock según rol — admin sigue leyendo `inventory`
+  // real (sin cambios); rep lee la proyección segura (sin costo). Mismo
+  // shape en ambos casos, así Orders/FieldOrder/Dashboard no distinguen.
+  const stockForOrders = isAdmin ? inventory : repStock;
+  // Después de aplicar inventario de un pedido: admin repull completo
+  // (incluye inventory real); rep solo refresca su proyección de stock.
+  const refreshStockAfterSale = isAdmin ? pullFromCloud : refreshRepStock;
 
   // Shell móvil: el hook debe llamarse ANTES de los returns del auth gate
   // (si no, el orden de hooks cambia entre renders y React truena).
@@ -950,7 +1072,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.29.0</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.30.1</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -975,8 +1097,8 @@ export default function App() {
         </div>}</div>
       {!isMobile && <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>{tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "5px 11px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: tab === t.id ? "#C41E3A" : "transparent", color: tab === t.id ? "#fff" : "#666" }}>{t.l}</button>)}</div>}</div>
     <div style={{ borderTop: "2px solid #C41E3A", paddingTop: 14 }}>
-      {tab === "mission" && currentUser?.role === "admin" && <MissionControl clients={clients} orders={orders} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} setTab={setTab} />}
-      {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={inventory} calcWeeks={calcWeeks} />}
+      {tab === "mission" && isAdmin && <MissionControl clients={clients} orders={orders} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} setTab={setTab} />}
+      {tab === "dashboard" && <Dashboard clients={clients} orders={orders} inventory={stockForOrders} calcWeeks={calcWeeks} hideFinancials={!isAdmin} />}
       {tab === "clients" && <Clients
         clients={clients}
         setClients={setClients}
@@ -986,23 +1108,24 @@ export default function App() {
         syncClientToPublicStores={syncClientToPublicStores}
         syncAllPublicStores={syncAllPublicStores}
         uploadStorePhoto={uploadStorePhoto}
+        currentRepresentativeId={isAdmin ? null : (currentUser?.representativeId ?? null)}
       />}
-      {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} setTab={setTab} setRO={setRo} />}
-      {tab === "fieldorder" && <FieldOrder clients={clients} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} representativeId={currentUser?.representativeId ?? null} setTab={setTab} setRO={setRo} />}
+      {tab === "orders" && <Orders clients={clients} orders={orders} setOrders={setOrders} inventory={stockForOrders} saveAll={sv} setTab={setTab} setRO={setRo} applyOrderInventory={applyOrderInventoryRpc} refreshStock={refreshStockAfterSale} hideFinancials={!isAdmin} />}
+      {tab === "fieldorder" && <FieldOrder clients={clients} setOrders={setOrders} inventory={stockForOrders} saveAll={sv} representativeId={currentUser?.representativeId ?? null} setTab={setTab} setRO={setRo} applyOrderInventory={applyOrderInventoryRpc} refreshStock={refreshStockAfterSale} />}
       {tab === "reorder" && <Reorders clients={clients} orders={orders} reminders={reminders} setReminders={setReminders} saveAll={sv} calcClientCycle={calcClientCycle} />}
       {tab === "postdel" && <PostDelivery clients={clients} orders={orders} followups={followups} setFollowups={setFollowups} saveAll={sv} />}
         {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}
-      {tab === "anuncios" && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
-      {tab === "weborders" && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
-      {tab === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} products={PRODUCTS} calcWeeks={calcWeeks}/>}
-      {tab === "purchases" && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} products={PRODUCTS}/>}
-      {tab === "reps" && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
-      {tab === "commissions" && <Commissions representatives={representatives} clients={clients} orders={orders} commissions={commissions} setCommissions={setCommissions} saveAll={sv} />}
-      {tab === "reports" && <Reports orders={orders} clients={clients} purchases={purchases} products={PRODUCTS} calcWeeks={calcWeeks}/>}
+      {tab === "anuncios" && isAdmin && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
+      {tab === "weborders" && isAdmin && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
+      {tab === "inventory" && isAdmin && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} products={PRODUCTS} calcWeeks={calcWeeks}/>}
+      {tab === "purchases" && isAdmin && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} products={PRODUCTS}/>}
+      {tab === "reps" && isAdmin && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
+      {tab === "commissions" && isAdmin && <Commissions representatives={representatives} clients={clients} orders={orders} commissions={commissions} setCommissions={setCommissions} saveAll={sv} />}
+      {tab === "reports" && isAdmin && <Reports orders={orders} clients={clients} purchases={purchases} products={PRODUCTS} calcWeeks={calcWeeks}/>}
       {tab === "receipt" && <Receipt order={ro} clients={clients} representatives={representatives} />}
-      {tab === "field" && <FieldDashboard visits={visits} />}
+      {tab === "field" && isAdmin && <FieldDashboard visits={visits} />}
       {tab === "visits" && <><div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><Btn primary onClick={() => { setEditVisit(null); setShowVisitForm(true); }}>+ New visit</Btn></div><VisitsList visits={visits} onEdit={v => { setEditVisit(v); setShowVisitForm(true); }} onDelete={deleteVisit} /></>}
-      {tab === "analysis" && <FieldExport visits={visits} />}
+      {tab === "analysis" && isAdmin && <FieldExport visits={visits} />}
     </div>
     {showVisitForm && <VisitForm onSave={saveVisit} onClose={() => { setShowVisitForm(false); setEditVisit(null); }} editVisit={editVisit} />}
 

@@ -155,6 +155,12 @@ export interface Order {
   returnedAmount?: number;          // dólares devueltos al cliente
   returnedDate?: string | null;     // YYYY-MM-DD del refund
   returnedNotes?: string;
+
+  /** true si apply_order_inventory() falló (red o stock insuficiente) y el
+   *  descuento de inventario de este pedido quedó sin confirmar. Solo UX —
+   *  la fuente de verdad real es public.order_inventory_applications
+   *  (Sprint 2.6, bloque 3). */
+  inventoryPending?: boolean;
 }
 
 // ============================================================
