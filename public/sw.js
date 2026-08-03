@@ -1,6 +1,6 @@
 // Service Worker for Dulce Sabor CRM PWA
 // Bumped version on every release so browsers fetch fresh assets.
-const CACHE_NAME = "megapg-v5.30.0";
+const CACHE_NAME = "megapg-v5.30.1";
 const ASSETS = ["/", "/index.html", "/manifest.json", "/logo.png"];
 
 self.addEventListener("install", (event) => {
@@ -35,15 +35,22 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+  // Endurecimiento preventivo: acotar la lectura de cache al CACHE_NAME
+  // vigente (en vez de caches.match global, que busca en cualquier cache
+  // del origen sin importar su nombre). Un bump de CACHE_NAME debe forzar
+  // cache-miss real para todo, sin depender de si el nombre de archivo
+  // hasheado por Vite cambia o no entre builds.
   event.respondWith(
-    caches.match(event.request).then((cached) =>
-      cached || fetch(event.request).then((resp) => {
-        if (resp && resp.status === 200 && resp.type === "basic") {
-          const respClone = resp.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, respClone));
-        }
-        return resp;
-      })
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.match(event.request).then((cached) =>
+        cached || fetch(event.request).then((resp) => {
+          if (resp && resp.status === 200 && resp.type === "basic") {
+            const respClone = resp.clone();
+            cache.put(event.request, respClone);
+          }
+          return resp;
+        })
+      )
     )
   );
 });
