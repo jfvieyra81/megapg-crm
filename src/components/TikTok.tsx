@@ -5,12 +5,40 @@ type Account = { display_name: string | null; username: string | null; connected
 type Classification = { product_id: string | null; theme: string | null; format: string | null; hook: string | null; cta: string | null; tags: string[] | null };
 type Video = { id: string; video_id: string; title: string | null; cover_image_url: string | null; share_url: string | null; create_time: string; view_count: number; like_count: number; comment_count: number; share_count: number; classification: Classification | null };
 type ClassificationDraft = { product_id: string; theme: string; format: string; hook: string; cta: string; tags: string };
+type Insight = { label: string; videos: number; views: number; engagementRate: number; commentsPerThousand: number; sharesPerThousand: number };
 
 const emptyDraft: ClassificationDraft = { product_id: "", theme: "", format: "", hook: "", cta: "", tags: "" };
 const draftFrom = (c: Classification | null): ClassificationDraft => ({
   product_id: c?.product_id || "", theme: c?.theme || "", format: c?.format || "",
   hook: c?.hook || "", cta: c?.cta || "", tags: (c?.tags || []).join(", "),
 });
+
+const engagementOf = (video: Video) => (video.like_count || 0) + (video.comment_count || 0) + (video.share_count || 0);
+const rate = (value: number, views: number, multiplier = 100) => views > 0 ? (value / views) * multiplier : 0;
+const formatRate = (value: number, digits = 1) => value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
+
+const buildInsights = (videos: Video[], labelFor: (video: Video) => string | null): Insight[] => {
+  const groups = new Map<string, { videos: number; views: number; engagement: number; comments: number; shares: number }>();
+  videos.forEach(video => {
+    const label = labelFor(video);
+    if (!label) return;
+    const current = groups.get(label) || { videos: 0, views: 0, engagement: 0, comments: 0, shares: 0 };
+    current.videos += 1;
+    current.views += video.view_count || 0;
+    current.engagement += engagementOf(video);
+    current.comments += video.comment_count || 0;
+    current.shares += video.share_count || 0;
+    groups.set(label, current);
+  });
+  return Array.from(groups.entries()).map(([label, group]) => ({
+    label,
+    videos: group.videos,
+    views: group.views,
+    engagementRate: rate(group.engagement, group.views),
+    commentsPerThousand: rate(group.comments, group.views, 1000),
+    sharesPerThousand: rate(group.shares, group.views, 1000),
+  })).sort((a, b) => b.engagementRate - a.engagementRate || b.views - a.views);
+};
 
 interface TikTokProps { url: string | null; anonKey: string | null; accessToken: string | null; products: readonly Product[]; }
 
@@ -90,6 +118,21 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
 
   const totals = videos.reduce((sum, video) => ({ views: sum.views + (video.view_count || 0), likes: sum.likes + (video.like_count || 0), comments: sum.comments + (video.comment_count || 0), shares: sum.shares + (video.share_count || 0) }), { views: 0, likes: 0, comments: 0, shares: 0 });
   const card = (label: string, value: number) => <div style={{ flex: "1 1 130px", background: "#FFF8E1", border: "1px solid #F1D9A5", borderRadius: 8, padding: 14 }}><div style={{ fontSize: 11, color: "#806B40", fontWeight: 700, textTransform: "uppercase" }}>{label}</div><div style={{ fontSize: 25, color: "#1A1A1A", fontWeight: 800, marginTop: 3 }}>{value.toLocaleString()}</div></div>;
+  const metricCard = (label: string, value: string) => <div style={{ flex: "1 1 130px", background: "#FFF8E1", border: "1px solid #F1D9A5", borderRadius: 8, padding: 14 }}><div style={{ fontSize: 11, color: "#806B40", fontWeight: 700, textTransform: "uppercase" }}>{label}</div><div style={{ fontSize: 25, color: "#1A1A1A", fontWeight: 800, marginTop: 3 }}>{value}</div></div>;
+  const classifiedVideos = videos.filter(video => !!(video.classification?.product_id || video.classification?.theme || video.classification?.format || video.classification?.hook || video.classification?.cta || video.classification?.tags?.length));
+  const productInsights = buildInsights(classifiedVideos, video => products.find(product => product.id === video.classification?.product_id)?.name || null);
+  const themeInsights = buildInsights(classifiedVideos, video => video.classification?.theme || null);
+  const formatInsights = buildInsights(classifiedVideos, video => video.classification?.format || null);
+  const overallEngagementRate = rate(totals.likes + totals.comments + totals.shares, totals.views);
+  const bestVideo = [...videos].sort((a, b) => rate(engagementOf(b), b.view_count) - rate(engagementOf(a), a.view_count))[0];
+  const insightList = (title: string, insights: Insight[]) => <div style={{ flex: "1 1 220px", border: "1px solid #E5E5E5", borderRadius: 8, padding: 12, background: "#fff" }}>
+    <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>{title}</div>
+    {insights.length === 0 ? <div style={{ fontSize: 12, color: "#777" }}>Aún no hay videos clasificados en esta categoría.</div> : insights.slice(0, 3).map(insight => <div key={insight.label} style={{ borderTop: "1px solid #F0F0F0", paddingTop: 8, marginTop: 8 }}>
+      <div style={{ fontWeight: 700, fontSize: 13 }}>{insight.label}</div>
+      <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{formatRate(insight.engagementRate)}% interacción · {formatRate(insight.sharesPerThousand)} compartidos / 1,000 vistas</div>
+      <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{insight.videos} {insight.videos === 1 ? "video" : "videos"} · {insight.views.toLocaleString()} vistas{insight.videos < 3 ? " · Muestra preliminar" : ""}</div>
+    </div>)}
+  </div>;
 
   return <section>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "start", marginBottom: 18 }}>
@@ -100,6 +143,24 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
     {loading ? <p style={{ color: "#666" }}>Cargando TikTok…</p> : !account ? <div style={{ background: "#F7F7F7", padding: 24, borderRadius: 8, color: "#555" }}>Aún no hay una cuenta conectada. Usa <b>Conectar TikTok</b> para autorizar @maestroflores1.</div> : <>
       <div style={{ fontSize: 14, marginBottom: 16 }}><b>Cuenta conectada:</b> {account.display_name || account.username || "TikTok"}{account.last_synced_at ? ` · Última sincronización: ${new Date(account.last_synced_at).toLocaleString()}` : " · Aún no sincronizada"}</div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>{card("Vistas", totals.views)}{card("Likes", totals.likes)}{card("Comentarios", totals.comments)}{card("Compartidos", totals.shares)}</div>
+      <section style={{ background: "#F8FAFC", border: "1px solid #DCE6F0", borderRadius: 9, padding: 14, marginBottom: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+          <div><h3 style={{ fontSize: 17, margin: 0 }}>Análisis de rendimiento</h3><p style={{ fontSize: 12, color: "#666", margin: "4px 0 0" }}>Compara los videos clasificados por producto, tema y formato.</p></div>
+          <div style={{ fontSize: 12, color: "#555" }}><b>{classifiedVideos.length}</b> de {videos.length} videos clasificados</div>
+        </div>
+        {classifiedVideos.length < 3 && <div style={{ background: "#FFF8E1", color: "#6C5315", borderRadius: 6, padding: "8px 10px", fontSize: 12, marginTop: 12 }}>Clasifica al menos 3 videos antes de tomar decisiones. Por ahora, los resultados son una muestra preliminar.</div>}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+          {metricCard("Interacción total", `${formatRate(overallEngagementRate)}%`)}
+          {metricCard("Comentarios / 1,000", formatRate(rate(totals.comments, totals.views, 1000)))}
+          {metricCard("Compartidos / 1,000", formatRate(rate(totals.shares, totals.views, 1000)))}
+          <div style={{ flex: "1 1 180px", background: "#FFF8E1", border: "1px solid #F1D9A5", borderRadius: 8, padding: 14 }}><div style={{ fontSize: 11, color: "#806B40", fontWeight: 700, textTransform: "uppercase" }}>Mejor interacción</div><div style={{ fontSize: 13, color: "#1A1A1A", fontWeight: 800, marginTop: 5 }}>{bestVideo ? `${formatRate(rate(engagementOf(bestVideo), bestVideo.view_count))}% · ${bestVideo.title || "Video sin título"}` : "Sin videos"}</div></div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+          {insightList("Productos", productInsights)}
+          {insightList("Temas", themeInsights)}
+          {insightList("Formatos", formatInsights)}
+        </div>
+      </section>
       <h3 style={{ fontSize: 17 }}>Videos importados ({videos.length})</h3>
       <div style={{ display: "grid", gap: 10 }}>{videos.map(video => {
         const productName = products.find(p => p.id === video.classification?.product_id)?.name;
