@@ -1074,7 +1074,7 @@ export default function App() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/logo.png" alt="Dulce Sabor LLC" style={{ height: isMobile ? 32 : 46, width: "auto", flexShrink: 0 }} />
-        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.30.1</span>}
+        {!isMobile && <span style={{ fontSize: 13, color: "#888" }}>CRM v5.31.0</span>}
         {currentUser && <span title={`${currentUser.email} • ${currentUser.role}`} style={{ fontSize: 11, fontWeight: 700, color: currentUser.role === "admin" ? "#1B7340" : "#6C3483", background: currentUser.role === "admin" ? "#E8F5E8" : "#F4ECF7", padding: "3px 8px", borderRadius: 12, border: `1px solid ${currentUser.role === "admin" ? "#C8E6C9" : "#E1BEE7"}` }}>👤 {currentUser.email.split("@")[0]} ({currentUser.role})</span>}
         {!isMobile && headerActionsMain}
         <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
@@ -1119,7 +1119,7 @@ export default function App() {
         {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}
       {tab === "anuncios" && isAdmin && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
       {tab === "weborders" && isAdmin && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
-      {tab === "tiktok" && isAdmin && <TikTokIntel url={SUPA_URL} anonKey={SUPA_KEY} accessToken={authStore.get()?.access_token || null} />}
+      {tab === "tiktok" && isAdmin && <TikTokIntel url={SUPA_URL} anonKey={SUPA_KEY} accessToken={authStore.get()?.access_token || null} products={PRODUCTS} />}
       {tab === "inventory" && isAdmin && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} products={PRODUCTS} calcWeeks={calcWeeks}/>}
       {tab === "purchases" && isAdmin && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} products={PRODUCTS}/>}
       {tab === "reps" && isAdmin && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
