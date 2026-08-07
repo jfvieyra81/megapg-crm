@@ -1,6 +1,7 @@
-import { decrypt, encrypt, json, redirectUri, service, sha256, tiktokClientKey, tiktokClientSecret } from "../_shared/tiktok.ts";
+import { corsHeaders, decrypt, encrypt, json, redirectUri, service, sha256, tiktokClientKey, tiktokClientSecret } from "../_shared/tiktok.ts";
 
 Deno.serve(async request => {
+  if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const url = new URL(request.url);
   const code = url.searchParams.get("code"); const state = url.searchParams.get("state"); const denied = url.searchParams.get("error");
   const crmUrl = Deno.env.get("TIKTOK_CRM_URL") || "https://megapg-crm.vercel.app";

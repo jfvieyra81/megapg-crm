@@ -1,6 +1,7 @@
-import { json, requireAdmin, service, sha256, tiktokClientKey, redirectUri } from "../_shared/tiktok.ts";
+import { corsHeaders, json, requireAdmin, service, sha256, tiktokClientKey, redirectUri } from "../_shared/tiktok.ts";
 
 Deno.serve(async request => {
+  if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const user = await requireAdmin(request);
     const state = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");

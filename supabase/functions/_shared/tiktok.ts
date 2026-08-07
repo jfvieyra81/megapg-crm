@@ -6,6 +6,7 @@ export const service = createClient(supabaseUrl, serviceRoleKey, { auth: { persi
 export const tiktokClientKey = Deno.env.get("TIKTOK_CLIENT_KEY")!;
 export const tiktokClientSecret = Deno.env.get("TIKTOK_CLIENT_SECRET")!;
 export const redirectUri = Deno.env.get("TIKTOK_REDIRECT_URI")!;
+export const corsHeaders = { "access-control-allow-origin": Deno.env.get("TIKTOK_CRM_URL") || "https://megapg-crm.vercel.app", "access-control-allow-headers": "authorization, apikey, content-type", "access-control-allow-methods": "GET, POST, OPTIONS" };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -48,5 +49,5 @@ export async function requireAdmin(request: Request) {
 }
 
 export function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...corsHeaders } });
 }

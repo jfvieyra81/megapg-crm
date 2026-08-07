@@ -1,0 +1,9 @@
+project_id = "avkgsmlsenkwsgbiwojk"
+
+# tiktok-oauth-callback recibe el redirect de TikTok directo desde el
+# navegador del usuario (sin header Authorization) y valida la solicitud con
+# su propio mecanismo de state hash (tiktok_oauth_states), no con un JWT de
+# Supabase. Ya está desplegado así en producción; esta config solo lo deja
+# declarado en el repo para que `supabase functions deploy` no lo revierta.
+[functions.tiktok-oauth-callback]
+verify_jwt = false

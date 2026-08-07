@@ -1,6 +1,7 @@
-import { decrypt, encrypt, json, requireAdmin, service, tiktokClientKey, tiktokClientSecret } from "../_shared/tiktok.ts";
+import { corsHeaders, decrypt, encrypt, json, requireAdmin, service, tiktokClientKey, tiktokClientSecret } from "../_shared/tiktok.ts";
 
 Deno.serve(async request => {
+  if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
   try {
     await requireAdmin(request);
