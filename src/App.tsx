@@ -53,6 +53,7 @@ import { LoginScreen, AccessDeniedScreen } from "./components/Auth";
 import { Announcements } from "./components/Announcements";
 import { WebOrders } from "./components/WebOrders";
 import { MissionControl } from "./components/MissionControl";
+import { TikTokIntel } from "./components/TikTok";
 import { PRODUCTS, pF, TIER_DISC, ST_CLR } from "./lib/catalog";
 import type { InventoryItem } from "./lib/catalog";
 import { WaBtn, cleanPhone, waLink, waOrder, waPayment, waReceipt } from "./lib/whatsapp";
@@ -1033,6 +1034,7 @@ export default function App() {
   // Sprint 2.6: navegación de rep reducida al set aprobado — el resto queda
   // admin-only (además bloqueado en RLS y en el gate de render de abajo).
   const REP_ALLOWED_TABS = ["dashboard", "clients", "orders", "fieldorder", "welcome", "reorder", "postdel", "visits", "receipt"];
+  if (isAdmin) allTabs.splice(10, 0, { id: "tiktok", l: "TikTok" });
   const tabs = isAdmin ? allTabs : allTabs.filter(t => REP_ALLOWED_TABS.includes(t.id));
 
   // Sprint 2.6: fuente de stock según rol — admin sigue leyendo `inventory`
@@ -1117,6 +1119,7 @@ export default function App() {
         {tab === "welcome" && <Welcomes clients={clients} orders={orders} welcomes={welcomes} setWelcomes={setWelcomes} saveAll={sv} getProductName={(id) => pF(id)?.name ?? null} />}
       {tab === "anuncios" && isAdmin && <Announcements clients={clients} templates={templates} setTemplates={setTemplates} campaign={campaign} setCampaign={setCampaign} saveAll={sv} />}
       {tab === "weborders" && isAdmin && <WebOrders clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} inventory={inventory} setInventory={setInventory} saveAll={sv} supa={{ enabled: cloudEnabled, url: SUPA_URL, key: SUPA_KEY, headers: authedHeaders() }} />}
+      {tab === "tiktok" && isAdmin && <TikTokIntel url={SUPA_URL} anonKey={SUPA_KEY} accessToken={authStore.get()?.access_token || null} />}
       {tab === "inventory" && isAdmin && <Inventory inventory={inventory} setInventory={setInventory} orders={orders} commissions={commissions} saveAll={sv} products={PRODUCTS} calcWeeks={calcWeeks}/>}
       {tab === "purchases" && isAdmin && <Purchases purchases={purchases} setPurchases={setPurchases} inventory={inventory} setInventory={setInventory} saveAll={sv} products={PRODUCTS}/>}
       {tab === "reps" && isAdmin && <Representatives representatives={representatives} setRepresentatives={setRepresentatives} clients={clients} orders={orders} commissions={commissions} saveAll={sv} />}
