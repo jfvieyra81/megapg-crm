@@ -2,14 +2,14 @@ import React, { useEffect, useState } from "react";
 import type { Product } from "../lib/catalog";
 
 type Account = { display_name: string | null; username: string | null; connected_at: string; last_synced_at: string | null };
-type Classification = { product_id: string | null; theme: string | null; format: string | null; hook: string | null; cta: string | null; tags: string[] | null };
+type Classification = { product_id: string | null; product_ids: string[] | null; theme: string | null; format: string | null; hook: string | null; cta: string | null; tags: string[] | null };
 type Video = { id: string; video_id: string; title: string | null; cover_image_url: string | null; share_url: string | null; create_time: string; view_count: number; like_count: number; comment_count: number; share_count: number; classification: Classification | null };
-type ClassificationDraft = { product_id: string; theme: string; format: string; hook: string; cta: string; tags: string };
+type ClassificationDraft = { product_id: string; product_ids: string[]; theme: string; format: string; hook: string; cta: string; tags: string };
 type Insight = { label: string; videos: number; views: number; engagementRate: number; commentsPerThousand: number; sharesPerThousand: number };
 
-const emptyDraft: ClassificationDraft = { product_id: "", theme: "", format: "", hook: "", cta: "", tags: "" };
+const emptyDraft: ClassificationDraft = { product_id: "", product_ids: [], theme: "", format: "", hook: "", cta: "", tags: "" };
 const draftFrom = (c: Classification | null): ClassificationDraft => ({
-  product_id: c?.product_id || "", theme: c?.theme || "", format: c?.format || "",
+  product_id: c?.product_id || "", product_ids: c?.product_ids || (c?.product_id ? [c.product_id] : []), theme: c?.theme || "", format: c?.format || "",
   hook: c?.hook || "", cta: c?.cta || "", tags: (c?.tags || []).join(", "),
 });
 
@@ -17,18 +17,18 @@ const engagementOf = (video: Video) => (video.like_count || 0) + (video.comment_
 const rate = (value: number, views: number, multiplier = 100) => views > 0 ? (value / views) * multiplier : 0;
 const formatRate = (value: number, digits = 1) => value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 
-const buildInsights = (videos: Video[], labelFor: (video: Video) => string | null): Insight[] => {
+const buildInsights = (videos: Video[], labelsFor: (video: Video) => string[]): Insight[] => {
   const groups = new Map<string, { videos: number; views: number; engagement: number; comments: number; shares: number }>();
   videos.forEach(video => {
-    const label = labelFor(video);
-    if (!label) return;
-    const current = groups.get(label) || { videos: 0, views: 0, engagement: 0, comments: 0, shares: 0 };
-    current.videos += 1;
-    current.views += video.view_count || 0;
-    current.engagement += engagementOf(video);
-    current.comments += video.comment_count || 0;
-    current.shares += video.share_count || 0;
-    groups.set(label, current);
+    Array.from(new Set(labelsFor(video))).filter(Boolean).forEach(label => {
+      const current = groups.get(label) || { videos: 0, views: 0, engagement: 0, comments: 0, shares: 0 };
+      current.videos += 1;
+      current.views += video.view_count || 0;
+      current.engagement += engagementOf(video);
+      current.comments += video.comment_count || 0;
+      current.shares += video.share_count || 0;
+      groups.set(label, current);
+    });
   });
   return Array.from(groups.entries()).map(([label, group]) => ({
     label,
@@ -59,7 +59,7 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
     try {
       const [a, v] = await Promise.all([
         fetch(`${url}/rest/v1/tiktok_accounts?select=display_name,username,connected_at,last_synced_at&order=connected_at.desc&limit=1`, { headers }),
-        fetch(`${url}/rest/v1/tiktok_videos?select=id,video_id,title,cover_image_url,share_url,create_time,view_count,like_count,comment_count,share_count,classification:tiktok_video_classifications(product_id,theme,format,hook,cta,tags)&order=create_time.desc`, { headers }),
+        fetch(`${url}/rest/v1/tiktok_videos?select=id,video_id,title,cover_image_url,share_url,create_time,view_count,like_count,comment_count,share_count,classification:tiktok_video_classifications(product_id,product_ids,theme,format,hook,cta,tags)&order=create_time.desc`, { headers }),
       ]);
       if (!a.ok || !v.ok) throw new Error("No se pudo leer la información de TikTok. Confirma que el script de Supabase fue ejecutado.");
       const accounts = await a.json();
@@ -83,6 +83,7 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
       const body = {
         video_id: video.id,
         product_id: draft.product_id || null,
+        product_ids: Array.from(new Set([draft.product_id, ...draft.product_ids].filter(Boolean))),
         theme: draft.theme.trim() || null,
         format: draft.format.trim() || null,
         hook: draft.hook.trim() || null,
@@ -120,9 +121,12 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
   const card = (label: string, value: number) => <div style={{ flex: "1 1 130px", background: "#FFF8E1", border: "1px solid #F1D9A5", borderRadius: 8, padding: 14 }}><div style={{ fontSize: 11, color: "#806B40", fontWeight: 700, textTransform: "uppercase" }}>{label}</div><div style={{ fontSize: 25, color: "#1A1A1A", fontWeight: 800, marginTop: 3 }}>{value.toLocaleString()}</div></div>;
   const metricCard = (label: string, value: string) => <div style={{ flex: "1 1 130px", background: "#FFF8E1", border: "1px solid #F1D9A5", borderRadius: 8, padding: 14 }}><div style={{ fontSize: 11, color: "#806B40", fontWeight: 700, textTransform: "uppercase" }}>{label}</div><div style={{ fontSize: 25, color: "#1A1A1A", fontWeight: 800, marginTop: 3 }}>{value}</div></div>;
   const classifiedVideos = videos.filter(video => !!(video.classification?.product_id || video.classification?.theme || video.classification?.format || video.classification?.hook || video.classification?.cta || video.classification?.tags?.length));
-  const productInsights = buildInsights(classifiedVideos, video => products.find(product => product.id === video.classification?.product_id)?.name || null);
-  const themeInsights = buildInsights(classifiedVideos, video => video.classification?.theme || null);
-  const formatInsights = buildInsights(classifiedVideos, video => video.classification?.format || null);
+  const productInsights = buildInsights(classifiedVideos, video => {
+    const ids = video.classification?.product_ids?.length ? video.classification.product_ids : (video.classification?.product_id ? [video.classification.product_id] : []);
+    return ids.map(id => products.find(product => product.id === id)?.name || "").filter(Boolean);
+  });
+  const themeInsights = buildInsights(classifiedVideos, video => video.classification?.theme ? [video.classification.theme] : []);
+  const formatInsights = buildInsights(classifiedVideos, video => video.classification?.format ? [video.classification.format] : []);
   const overallEngagementRate = rate(totals.likes + totals.comments + totals.shares, totals.views);
   const bestVideo = [...videos].sort((a, b) => rate(engagementOf(b), b.view_count) - rate(engagementOf(a), a.view_count))[0];
   const insightList = (title: string, insights: Insight[]) => <div style={{ flex: "1 1 220px", border: "1px solid #E5E5E5", borderRadius: 8, padding: 12, background: "#fff" }}>
@@ -163,7 +167,8 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
       </section>
       <h3 style={{ fontSize: 17 }}>Videos importados ({videos.length})</h3>
       <div style={{ display: "grid", gap: 10 }}>{videos.map(video => {
-        const productName = products.find(p => p.id === video.classification?.product_id)?.name;
+        const productIds = video.classification?.product_ids?.length ? video.classification.product_ids : (video.classification?.product_id ? [video.classification.product_id] : []);
+        const productNames = productIds.map(id => products.find(product => product.id === id)?.name).filter((name): name is string => !!name);
         const isOpen = openId === video.id;
         return <div key={video.id} style={{ border: "1px solid #e5e5e5", borderRadius: 8, padding: 10 }}>
           <div style={{ display: "flex", gap: 12 }}>
@@ -173,7 +178,7 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
                 <div style={{ fontWeight: 700, marginBottom: 5 }}>{video.title || "Video sin título"}</div>
                 <div style={{ fontSize: 13, color: "#666" }}>{new Date(video.create_time).toLocaleDateString()} · {video.view_count.toLocaleString()} vistas · {video.like_count.toLocaleString()} likes · {video.comment_count.toLocaleString()} comentarios · {video.share_count.toLocaleString()} compartidos</div>
                 <div style={{ fontSize: 13, color: "#444", marginTop: 5 }}>
-                  {productName && <b>{productName}</b>}{productName && (video.classification?.theme || video.classification?.format) ? " · " : ""}
+                  {productNames.length > 0 && <b>{productNames.join(" + ")}</b>}{productNames.length > 0 && (video.classification?.theme || video.classification?.format) ? " · " : ""}
                   {video.classification?.theme}{video.classification?.theme && video.classification?.format ? " · " : ""}{video.classification?.format}
                   {video.classification?.tags && video.classification.tags.length > 0 && <span style={{ marginLeft: 6 }}>{video.classification.tags.map(tag => <span key={tag} style={{ background: "#FFF3D6", color: "#7A5A00", borderRadius: 4, padding: "1px 6px", fontSize: 11, marginRight: 4 }}>{tag}</span>)}</span>}
                 </div>
@@ -183,11 +188,20 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
           </div>
           {isOpen && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #eee", display: "grid", gap: 8 }}>
             <label style={{ fontSize: 12, color: "#666" }}>Producto
-              <select value={draft.product_id} onChange={e => setDraft({ ...draft, product_id: e.target.value })} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, borderRadius: 5, border: "1px solid #ccc" }}>
+              <select value={draft.product_id} onChange={e => setDraft({ ...draft, product_id: e.target.value, product_ids: Array.from(new Set([e.target.value, ...draft.product_ids].filter(Boolean))) })} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, borderRadius: 5, border: "1px solid #ccc" }}>
                 <option value="">— Sin producto —</option>
                 {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </label>
+            <fieldset style={{ border: "1px solid #DDD", borderRadius: 6, margin: 0, padding: 9 }}>
+              <legend style={{ fontSize: 12, color: "#666", padding: "0 4px" }}>Productos secundarios</legend>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 6 }}>
+                {products.filter(product => product.id !== draft.product_id).map(product => <label key={product.id} style={{ fontSize: 12, color: "#444", display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={draft.product_ids.includes(product.id)} onChange={e => setDraft({ ...draft, product_ids: e.target.checked ? [...draft.product_ids, product.id] : draft.product_ids.filter(id => id !== product.id) })} />
+                  {product.name}
+                </label>)}
+              </div>
+            </fieldset>
             <label style={{ fontSize: 12, color: "#666" }}>Tema
               <input value={draft.theme} onChange={e => setDraft({ ...draft, theme: e.target.value })} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, borderRadius: 5, border: "1px solid #ccc" }} />
             </label>
