@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from "react";
 import type { Product } from "../lib/catalog";
 
-type Account = { display_name: string | null; username: string | null; connected_at: string; last_synced_at: string | null };
+type Account = { id: string; display_name: string | null; username: string | null; connected_at: string; last_synced_at: string | null };
 type Classification = { product_id: string | null; product_ids: string[] | null; theme: string | null; format: string | null; hook: string | null; cta: string | null; tags: string[] | null };
 type Video = { id: string; video_id: string; title: string | null; cover_image_url: string | null; share_url: string | null; create_time: string; view_count: number; like_count: number; comment_count: number; share_count: number; classification: Classification | null };
 type ClassificationDraft = { product_id: string; product_ids: string[]; theme: string; format: string; hook: string; cta: string; tags: string };
 type Insight = { label: string; videos: number; views: number; engagementRate: number; commentsPerThousand: number; sharesPerThousand: number };
+type ContentPlan = { id: string; idea_key: string; title: string; product_ids: string[]; theme: string | null; format: string | null; hook: string | null; cta: string | null; rationale: string | null; status: "planned" | "published"; created_at: string };
+type Recommendation = Omit<ContentPlan, "id" | "idea_key" | "status" | "created_at">;
+
+const ideaKeyOf = (r: Pick<Recommendation, "product_ids" | "theme" | "format" | "hook">) =>
+  [[...r.product_ids].sort().join(","), (r.theme || "").trim().toLowerCase(), (r.format || "").trim().toLowerCase(), (r.hook || "").trim().toLowerCase()].join("||");
 
 const emptyDraft: ClassificationDraft = { product_id: "", product_ids: [], theme: "", format: "", hook: "", cta: "", tags: "" };
 const draftFrom = (c: Classification | null): ClassificationDraft => ({
@@ -45,27 +50,33 @@ interface TikTokProps { url: string | null; anonKey: string | null; accessToken:
 export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, products }) => {
   const [account, setAccount] = useState<Account | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
+  const [plans, setPlans] = useState<ContentPlan[]>([]);
+  const [plansConfigured, setPlansConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ClassificationDraft>(emptyDraft);
   const [saving, setSaving] = useState<string | null>(null);
+  const [savingPlan, setSavingPlan] = useState<string | null>(null);
   const headers = { apikey: anonKey || "", Authorization: `Bearer ${accessToken || ""}`, "Content-Type": "application/json" };
 
   const load = async () => {
     if (!url || !anonKey || !accessToken) { setError("Supabase no está configurado o no hay sesión de administrador."); setLoading(false); return; }
     setLoading(true); setError(null);
     try {
-      const [a, v] = await Promise.all([
-        fetch(`${url}/rest/v1/tiktok_accounts?select=display_name,username,connected_at,last_synced_at&order=connected_at.desc&limit=1`, { headers }),
+      const [a, v, p] = await Promise.all([
+        fetch(`${url}/rest/v1/tiktok_accounts?select=id,display_name,username,connected_at,last_synced_at&order=connected_at.desc&limit=1`, { headers }),
         fetch(`${url}/rest/v1/tiktok_videos?select=id,video_id,title,cover_image_url,share_url,create_time,view_count,like_count,comment_count,share_count,classification:tiktok_video_classifications(product_id,product_ids,theme,format,hook,cta,tags)&order=create_time.desc`, { headers }),
+        fetch(`${url}/rest/v1/tiktok_content_plans?select=id,idea_key,title,product_ids,theme,format,hook,cta,rationale,status,created_at&order=created_at.desc`, { headers }),
       ]);
       if (!a.ok || !v.ok) throw new Error("No se pudo leer la información de TikTok. Confirma que el script de Supabase fue ejecutado.");
       const accounts = await a.json();
       const rawVideos: Array<Omit<Video, "classification"> & { classification: Classification | Classification[] | null }> = await v.json();
       setAccount(accounts[0] || null);
       setVideos(rawVideos.map(row => ({ ...row, classification: Array.isArray(row.classification) ? (row.classification[0] ?? null) : row.classification })));
+      setPlansConfigured(p.ok);
+      setPlans(p.ok ? await p.json() : []);
     } catch (e) { setError(e instanceof Error ? e.message : "Error de conexión"); }
     finally { setLoading(false); }
   };
@@ -99,6 +110,34 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
     finally { setSaving(null); }
   };
 
+  const savePlan = async (recommendation: Recommendation) => {
+    if (!url || !accessToken || !account) return;
+    setSavingPlan(recommendation.title); setError(null);
+    try {
+      const response = await fetch(`${url}/rest/v1/tiktok_content_plans?on_conflict=idea_key`, {
+        method: "POST", headers: { ...headers, Prefer: "resolution=ignore-duplicates,return=representation" },
+        body: JSON.stringify({ ...recommendation, idea_key: ideaKeyOf(recommendation), account_id: account.id, status: "planned", updated_at: new Date().toISOString() }),
+      });
+      if (!response.ok && response.status !== 409) throw new Error("No se pudo guardar la idea. Ejecuta el script del Laboratorio de Contenido en Supabase.");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Error al guardar la idea"); }
+    finally { setSavingPlan(null); }
+  };
+
+  const updatePlanStatus = async (plan: ContentPlan, status: ContentPlan["status"]) => {
+    if (!url || !accessToken) return;
+    setSavingPlan(plan.id); setError(null);
+    try {
+      const response = await fetch(`${url}/rest/v1/tiktok_content_plans?id=eq.${encodeURIComponent(plan.id)}`, {
+        method: "PATCH", headers: { ...headers, Prefer: "return=representation" },
+        body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
+      });
+      if (!response.ok) throw new Error("No se pudo actualizar el estado del plan.");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Error al actualizar el plan"); }
+    finally { setSavingPlan(null); }
+  };
+
   const connect = async () => {
     if (!url || !accessToken) return;
     const response = await fetch(`${url}/functions/v1/tiktok-connect`, { headers });
@@ -129,6 +168,44 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
   const formatInsights = buildInsights(classifiedVideos, video => video.classification?.format ? [video.classification.format] : []);
   const overallEngagementRate = rate(totals.likes + totals.comments + totals.shares, totals.views);
   const bestVideo = [...videos].sort((a, b) => rate(engagementOf(b), b.view_count) - rate(engagementOf(a), a.view_count))[0];
+  const productIdFor = (name?: string) => products.find(product => product.name === name)?.id;
+  const topProduct = productInsights[0];
+  const secondProduct = productInsights[1];
+  const topTheme = themeInsights[0];
+  const topFormat = formatInsights[0];
+  const hasSignal = productInsights.length > 0 || themeInsights.length > 0 || formatInsights.length > 0;
+  const recommendations: Recommendation[] = hasSignal ? [
+    {
+      title: `Repetir: ${topFormat?.label || "formato ganador"}`,
+      product_ids: productIdFor(topProduct?.label) ? [productIdFor(topProduct?.label)!] : [],
+      theme: topTheme?.label || "Contenido de comunidad",
+      format: topFormat?.label || "Reto de comunidad",
+      hook: `El reto del Maestro: ¿cuál elegirías tú?`,
+      cta: "Comenta tu respuesta y etiqueta a quien debe participar.",
+      rationale: topFormat ? `${topFormat.label} acumula ${formatRate(topFormat.engagementRate)}% de interacción en ${topFormat.videos} videos clasificados.` : "Aún no hay suficientes videos clasificados por formato; usa esta idea como punto de partida y clasifica más videos para afinarla.",
+    },
+    {
+      title: `Comparación: ${topProduct?.label || "producto favorito"}${secondProduct ? ` vs ${secondProduct.label}` : ""}`,
+      product_ids: [productIdFor(topProduct?.label), productIdFor(secondProduct?.label)].filter((id): id is string => !!id),
+      theme: "Comparación y conversación",
+      format: "Reto de comunidad",
+      hook: `¿Cuál se lleva el punto: ${topProduct?.label || "el dulce del Maestro"}${secondProduct ? ` o ${secondProduct.label}` : ""}?`,
+      cta: "Vota en comentarios y etiqueta a la persona que elegiría lo contrario.",
+      rationale: topProduct ? `${topProduct.label} tiene ${formatRate(topProduct.engagementRate)}% de interacción en los videos clasificados.` : "Aún no hay suficientes videos clasificados por producto; usa esta idea como punto de partida y clasifica más videos para afinarla.",
+    },
+    {
+      title: `Prueba local: ${topProduct?.label || "Dulces del Maestro"}`,
+      product_ids: productIdFor(topProduct?.label) ? [productIdFor(topProduct?.label)!] : [],
+      theme: "Punto de venta y comunidad",
+      format: "Prueba de producto",
+      hook: `Le dimos a probar ${topProduct?.label || "el dulce del Maestro"} por primera vez…`,
+      cta: "¿En qué tienda te gustaría probarlo? Déjalo en los comentarios.",
+      rationale: "Prueba una reacción real y menciona un punto de venta para convertir curiosidad en visita.",
+    },
+  ] : [];
+  const plannedPlans = plans.filter(plan => plan.status === "planned");
+  const publishedPlans = plans.filter(plan => plan.status === "published");
+  const planProductNames = (plan: Pick<ContentPlan, "product_ids">) => plan.product_ids.map(id => products.find(product => product.id === id)?.name).filter((name): name is string => !!name);
   const insightList = (title: string, insights: Insight[]) => <div style={{ flex: "1 1 220px", border: "1px solid #E5E5E5", borderRadius: 8, padding: 12, background: "#fff" }}>
     <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>{title}</div>
     {insights.length === 0 ? <div style={{ fontSize: 12, color: "#777" }}>Aún no hay videos clasificados en esta categoría.</div> : insights.slice(0, 3).map(insight => <div key={insight.label} style={{ borderTop: "1px solid #F0F0F0", paddingTop: 8, marginTop: 8 }}>
@@ -164,6 +241,34 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
           {insightList("Temas", themeInsights)}
           {insightList("Formatos", formatInsights)}
         </div>
+      </section>
+      <section style={{ background: "#F7FBF8", border: "1px solid #CFE5D5", borderRadius: 9, padding: 14, marginBottom: 22 }}>
+        <div><h3 style={{ fontSize: 17, margin: 0 }}>Laboratorio de Contenido</h3><p style={{ fontSize: 12, color: "#666", margin: "4px 0 0" }}>Tres ideas basadas en tus videos clasificados. Planea una, grábala y después marca que fue publicada.</p></div>
+        {!plansConfigured ? <div style={{ background: "#FFF8E1", color: "#6C5315", borderRadius: 6, padding: "9px 10px", fontSize: 12, marginTop: 12 }}>Falta activar el Laboratorio. Ejecuta en Supabase el archivo <b>supabase/2026-08-08_tiktok_content_plans.sql</b>; después actualiza esta página.</div> : recommendations.length === 0 ? <div style={{ fontSize: 12, color: "#666", marginTop: 12 }}>Clasifica videos para recibir recomendaciones.</div> : <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, marginTop: 12 }}>
+            {recommendations.map(recommendation => {
+              const alreadyPlanned = plans.some(plan => plan.idea_key === ideaKeyOf(recommendation));
+              const names = planProductNames(recommendation);
+              return <article key={recommendation.title} style={{ background: "#fff", border: "1px solid #DCE6DF", borderRadius: 8, padding: 12 }}>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{recommendation.title}</div>
+                <div style={{ fontSize: 12, color: "#555", marginTop: 6 }}><b>Producto:</b> {names.length ? names.join(" + ") : "Sin producto específico"}</div>
+                <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}><b>Formato:</b> {recommendation.format}</div>
+                <div style={{ fontSize: 12, color: "#444", marginTop: 8 }}><b>Gancho:</b> “{recommendation.hook}”</div>
+                <div style={{ fontSize: 12, color: "#444", marginTop: 5 }}><b>CTA:</b> {recommendation.cta}</div>
+                <div style={{ fontSize: 11, color: "#68766C", marginTop: 8 }}>{recommendation.rationale}</div>
+                <button onClick={() => savePlan(recommendation)} disabled={alreadyPlanned || savingPlan === recommendation.title} style={{ background: alreadyPlanned ? "#E8EEE9" : "#1F6B45", color: alreadyPlanned ? "#4E6757" : "#fff", border: 0, borderRadius: 6, padding: "8px 10px", fontWeight: 700, fontSize: 12, cursor: alreadyPlanned ? "default" : "pointer", marginTop: 10 }}>{savingPlan === recommendation.title ? "Guardando…" : alreadyPlanned ? "Ya está en planes" : "Planear esta idea"}</button>
+              </article>;
+            })}
+          </div>
+          {plannedPlans.length > 0 && <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Ideas planeadas ({plannedPlans.length})</div>
+            <div style={{ display: "grid", gap: 7, marginTop: 7 }}>{plannedPlans.map(plan => <div key={plan.id} style={{ background: "#fff", border: "1px solid #DCE6DF", borderRadius: 7, padding: "9px 10px", display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+              <div><b style={{ fontSize: 13 }}>{plan.title}</b><div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>{planProductNames(plan).join(" + ") || "Sin producto específico"} · {plan.format || "Sin formato"}</div></div>
+              <button onClick={() => updatePlanStatus(plan, "published")} disabled={savingPlan === plan.id} style={{ background: "#1F6B45", color: "#fff", border: 0, borderRadius: 6, padding: "7px 9px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{savingPlan === plan.id ? "Guardando…" : "Marcar publicada"}</button>
+            </div>)}</div>
+          </div>}
+          {publishedPlans.length > 0 && <div style={{ fontSize: 12, color: "#4E6757", marginTop: 12 }}><b>{publishedPlans.length}</b> {publishedPlans.length === 1 ? "idea publicada" : "ideas publicadas"}. Cuando sincronices TikTok, clasifica el nuevo video para comparar su resultado.</div>}
+        </>}
       </section>
       <h3 style={{ fontSize: 17 }}>Videos importados ({videos.length})</h3>
       <div style={{ display: "grid", gap: 10 }}>{videos.map(video => {
