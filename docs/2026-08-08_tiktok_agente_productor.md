@@ -24,6 +24,39 @@ una nota de seguridad — todo listo para llevar a grabar.
   cambiarlo en cualquier momento desde los botones de estado.
 - Sincronizar TikTok no borra ni modifica ningún paquete.
 
+## Exportar / imprimir PDF
+
+Dentro de cada paquete abierto, arriba a la derecha, hay un botón
+**Exportar / imprimir PDF**. Al presionarlo:
+
+1. Se abre una ventana nueva con una versión limpia del paquete — sin
+   botones, sin campos editables, sin navegación del CRM — lista para leer
+   durante la grabación.
+2. Esa ventana llama automáticamente al diálogo de impresión del navegador.
+   Desde ahí José elige **Guardar como PDF** (para archivarlo o compartirlo)
+   o lo manda directo a una impresora.
+3. La exportación toma el contenido **tal como está en pantalla en ese
+   momento**, incluyendo cambios que todavía no se hayan guardado con
+   "Guardar cambios" — no pierde nada, pero tampoco guarda nada
+   automáticamente: el paquete original sigue exactamente igual después de
+   exportar.
+
+La hoja de impresión incluye: nombre de Maestro Flores y título del plan,
+fecha de exportación, estado del paquete, objetivo/audiencia/hipótesis,
+producto principal y secundarios, duración y formato 9:16, el guion completo
+segundo a segundo en tabla, tomas, iluminación, audio, ubicación/vestuario/
+props, instrucciones de edición, caption/CTA/hashtags, los dos checklists y
+la nota de seguridad. Está pensada para papel Carta con márgenes normales;
+el navegador intenta no cortar una fila del guion o de tomas entre dos
+páginas.
+
+Si el navegador bloquea la ventana emergente, el CRM muestra un aviso pidiendo
+permitir ventanas emergentes para el sitio y volver a intentarlo — no se pierde
+ningún dato, solo hay que reintentar.
+
+No se usó ninguna librería nueva para esto: es HTML normal impreso con la
+función nativa `window.print()` del navegador.
+
 ## Sin proveedor de IA (por ahora)
 
 El proyecto todavía no tiene conectado ningún proveedor de IA (no hay
@@ -63,7 +96,7 @@ modificar los paquetes.
 
 **Antes de correr el SQL nuevo:**
 1. Entra al CRM como administrador → **TikTok** → confirma que dice **CRM
-   v5.35.0** arriba (si no, cierra y reabre la pestaña).
+   v5.36.0** arriba (si no, cierra y reabre la pestaña).
 2. En "Ideas planeadas" (o crea una idea nueva desde el Laboratorio si no hay
    ninguna), cada tarjeta debe mostrar la nota amarilla "Activa el Agente
    Productor: ejecuta supabase/2026-08-08_tiktok_production_packets.sql" en
@@ -85,3 +118,11 @@ modificar los paquetes.
    mantiene después de refrescar.
 7. Presiona **↻ Sincronizar**: el paquete y su contenido deben seguir
    presentes sin cambios.
+8. Edita un campo del paquete (por ejemplo el caption) **sin** presionar
+   "Guardar cambios", y presiona **Exportar / imprimir PDF**. Confirma que la
+   ventana de impresión muestra ese cambio aunque no se haya guardado, que
+   incluye el guion y los dos checklists completos, y que no aparece ningún
+   botón ni menú del CRM. Elige "Guardar como PDF" en el diálogo del
+   navegador para confirmar que se genera bien.
+9. Cierra la ventana de impresión y confirma que el paquete en el CRM sigue
+   editable y que su estado no cambió (exportar no guarda ni modifica nada).

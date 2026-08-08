@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type { Product } from "../lib/catalog";
 import type { GuionBeat, LuzSetup, PacketStatus, ProductionPacket, ProductionPacketContent, Toma } from "../lib/productionPacket";
+import { buildPrintableHtml } from "../lib/productionPacketPrint";
 
 const STATUS_LABEL: Record<PacketStatus, string> = { borrador: "Borrador", aprobado: "Aprobado", grabado: "Grabado", publicado: "Publicado" };
 const STATUS_ORDER: PacketStatus[] = ["borrador", "aprobado", "grabado", "publicado"];
@@ -42,15 +43,17 @@ export const TikTokProductionPacket: React.FC<Props> = ({ url, anonKey, accessTo
   const headers = { apikey: anonKey, Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
   const set = <K extends keyof ProductionPacketContent>(key: K, value: ProductionPacketContent[K]) => setDraft(d => ({ ...d, [key]: value }));
 
+  const sanitizedDraft = (): ProductionPacketContent => ({
+    ...draft,
+    hashtags: hashtagsText.split(/\s+/).map(h => h.trim()).filter(Boolean),
+    checklist_pre_grabacion: draft.checklist_pre_grabacion.map(s => s.trim()).filter(Boolean),
+    checklist_pre_publicacion: draft.checklist_pre_publicacion.map(s => s.trim()).filter(Boolean),
+  });
+
   const saveContent = async () => {
     setSaving(true);
     try {
-      const sanitized: ProductionPacketContent = {
-        ...draft,
-        hashtags: hashtagsText.split(/\s+/).map(h => h.trim()).filter(Boolean),
-        checklist_pre_grabacion: draft.checklist_pre_grabacion.map(s => s.trim()).filter(Boolean),
-        checklist_pre_publicacion: draft.checklist_pre_publicacion.map(s => s.trim()).filter(Boolean),
-      };
+      const sanitized = sanitizedDraft();
       const response = await fetch(`${url}/rest/v1/tiktok_production_packets?id=eq.${encodeURIComponent(packet.id)}`, {
         method: "PATCH", headers: { ...headers, Prefer: "return=representation" },
         body: JSON.stringify({ content: sanitized, updated_at: new Date().toISOString() }),
@@ -75,13 +78,28 @@ export const TikTokProductionPacket: React.FC<Props> = ({ url, anonKey, accessTo
     finally { setSettingStatus(false); }
   };
 
+  const exportPdf = () => {
+    const sanitized = sanitizedDraft();
+    const principalName = products.find(p => p.id === sanitized.producto_principal_id)?.name || "";
+    const secundariosNames = sanitized.productos_secundarios_ids.map(id => products.find(p => p.id === id)?.name).filter((name): name is string => !!name);
+    const html = buildPrintableHtml({ plan: { title: plan.title, theme: plan.theme, format: plan.format }, status: packet.status, content: sanitized, principalName, secundariosNames });
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) { onError("El navegador bloqueó la ventana de impresión. Permite ventanas emergentes para este sitio e inténtalo de nuevo."); return; }
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
   return <div style={{ background: "#fff", border: "1px solid #CFE5D5", borderRadius: 8, padding: 14, marginTop: 8 }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "start" }}>
       <div>
         <div style={{ fontWeight: 800, fontSize: 15 }}>Paquete de producción</div>
         <div style={{ fontSize: 11, color: "#777", marginTop: 2 }}>Generado por: {packet.source === "ai" ? "IA" : "plantilla (sin proveedor de IA configurado)"} · Actualizado {new Date(packet.updated_at).toLocaleString()}</div>
       </div>
-      <button onClick={onClose} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>Cerrar</button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={exportPdf} style={{ background: "#111", color: "#fff", border: 0, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Exportar / imprimir PDF</button>
+        <button onClick={onClose} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>Cerrar</button>
+      </div>
     </div>
 
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
