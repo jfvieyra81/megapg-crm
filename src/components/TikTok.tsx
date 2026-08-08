@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
 import type { Product } from "../lib/catalog";
+import { buildTemplatePacket, type PacketStatus, type ProductionPacket } from "../lib/productionPacket";
+import { TikTokProductionPacket } from "./TikTokProductionPacket";
 
 type Account = { id: string; display_name: string | null; username: string | null; connected_at: string; last_synced_at: string | null };
 type Classification = { product_id: string | null; product_ids: string[] | null; theme: string | null; format: string | null; hook: string | null; cta: string | null; tags: string[] | null };
 type Video = { id: string; video_id: string; title: string | null; cover_image_url: string | null; share_url: string | null; create_time: string; view_count: number; like_count: number; comment_count: number; share_count: number; classification: Classification | null };
 type ClassificationDraft = { product_id: string; product_ids: string[]; theme: string; format: string; hook: string; cta: string; tags: string };
 type Insight = { label: string; videos: number; views: number; engagementRate: number; commentsPerThousand: number; sharesPerThousand: number };
-type ContentPlan = { id: string; idea_key: string; title: string; product_ids: string[]; theme: string | null; format: string | null; hook: string | null; cta: string | null; rationale: string | null; status: "planned" | "published"; created_at: string };
+export type ContentPlan = { id: string; idea_key: string; title: string; product_ids: string[]; theme: string | null; format: string | null; hook: string | null; cta: string | null; rationale: string | null; status: "planned" | "published"; created_at: string };
 type Recommendation = Omit<ContentPlan, "id" | "idea_key" | "status" | "created_at">;
 
 const ideaKeyOf = (r: Pick<Recommendation, "product_ids" | "theme" | "format" | "hook">) =>
@@ -52,6 +54,10 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
   const [videos, setVideos] = useState<Video[]>([]);
   const [plans, setPlans] = useState<ContentPlan[]>([]);
   const [plansConfigured, setPlansConfigured] = useState(true);
+  const [packets, setPackets] = useState<ProductionPacket[]>([]);
+  const [packetsConfigured, setPacketsConfigured] = useState(true);
+  const [openPacketPlanId, setOpenPacketPlanId] = useState<string | null>(null);
+  const [creatingPacket, setCreatingPacket] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,10 +71,11 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
     if (!url || !anonKey || !accessToken) { setError("Supabase no está configurado o no hay sesión de administrador."); setLoading(false); return; }
     setLoading(true); setError(null);
     try {
-      const [a, v, p] = await Promise.all([
+      const [a, v, p, pp] = await Promise.all([
         fetch(`${url}/rest/v1/tiktok_accounts?select=id,display_name,username,connected_at,last_synced_at&order=connected_at.desc&limit=1`, { headers }),
         fetch(`${url}/rest/v1/tiktok_videos?select=id,video_id,title,cover_image_url,share_url,create_time,view_count,like_count,comment_count,share_count,classification:tiktok_video_classifications(product_id,product_ids,theme,format,hook,cta,tags)&order=create_time.desc`, { headers }),
         fetch(`${url}/rest/v1/tiktok_content_plans?select=id,idea_key,title,product_ids,theme,format,hook,cta,rationale,status,created_at&order=created_at.desc`, { headers }),
+        fetch(`${url}/rest/v1/tiktok_production_packets?select=id,plan_id,status,source,content,created_at,updated_at`, { headers }),
       ]);
       if (!a.ok || !v.ok) throw new Error("No se pudo leer la información de TikTok. Confirma que el script de Supabase fue ejecutado.");
       const accounts = await a.json();
@@ -77,6 +84,8 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
       setVideos(rawVideos.map(row => ({ ...row, classification: Array.isArray(row.classification) ? (row.classification[0] ?? null) : row.classification })));
       setPlansConfigured(p.ok);
       setPlans(p.ok ? await p.json() : []);
+      setPacketsConfigured(pp.ok);
+      setPackets(pp.ok ? await pp.json() : []);
     } catch (e) { setError(e instanceof Error ? e.message : "Error de conexión"); }
     finally { setLoading(false); }
   };
@@ -136,6 +145,24 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Error al actualizar el plan"); }
     finally { setSavingPlan(null); }
+  };
+
+  const packetForPlan = (planId: string) => packets.find(pk => pk.plan_id === planId) || null;
+
+  const createPacket = async (plan: ContentPlan) => {
+    if (!url || !accessToken) return;
+    setCreatingPacket(plan.id); setError(null);
+    try {
+      const content = buildTemplatePacket(plan, planProductNames(plan));
+      const response = await fetch(`${url}/rest/v1/tiktok_production_packets?on_conflict=plan_id`, {
+        method: "POST", headers: { ...headers, Prefer: "resolution=ignore-duplicates,return=representation" },
+        body: JSON.stringify({ plan_id: plan.id, status: "borrador", source: "template", content, updated_at: new Date().toISOString() }),
+      });
+      if (!response.ok && response.status !== 409) throw new Error("No se pudo crear el paquete de producción. Ejecuta el script del Agente Productor en Supabase.");
+      setOpenPacketPlanId(plan.id);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Error al crear el paquete de producción"); }
+    finally { setCreatingPacket(null); }
   };
 
   const connect = async () => {
@@ -206,6 +233,26 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
   const plannedPlans = plans.filter(plan => plan.status === "planned");
   const publishedPlans = plans.filter(plan => plan.status === "published");
   const planProductNames = (plan: Pick<ContentPlan, "product_ids">) => plan.product_ids.map(id => products.find(product => product.id === id)?.name).filter((name): name is string => !!name);
+  const PACKET_LABEL: Record<PacketStatus, string> = { borrador: "Borrador", aprobado: "Aprobado", grabado: "Grabado", publicado: "Publicado" };
+  const PACKET_COLOR: Record<PacketStatus, string> = { borrador: "#F1D9A5", aprobado: "#BFE0C9", grabado: "#B9D6EE", publicado: "#CFE5D5" };
+  const renderPlanRow = (plan: ContentPlan, showPublishButton: boolean) => {
+    const packet = packetForPlan(plan.id);
+    const isOpen = openPacketPlanId === plan.id;
+    return <div key={plan.id} style={{ background: "#fff", border: "1px solid #DCE6DF", borderRadius: 7, padding: "9px 10px" }}>
+      <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+        <div><b style={{ fontSize: 13 }}>{plan.title}</b><div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>{planProductNames(plan).join(" + ") || "Sin producto específico"} · {plan.format || "Sin formato"}</div></div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {showPublishButton && <button onClick={() => updatePlanStatus(plan, "published")} disabled={savingPlan === plan.id} style={{ background: "#1F6B45", color: "#fff", border: 0, borderRadius: 6, padding: "7px 9px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{savingPlan === plan.id ? "Guardando…" : "Marcar publicada"}</button>}
+          {packetsConfigured && <span style={{ fontSize: 11, fontWeight: 700, color: packet ? "#1A1A1A" : "#888", background: packet ? PACKET_COLOR[packet.status] : "#EEE", borderRadius: 10, padding: "3px 8px" }}>{packet ? PACKET_LABEL[packet.status] : "Sin paquete"}</span>}
+          {packetsConfigured && (packet
+            ? <button onClick={() => setOpenPacketPlanId(isOpen ? null : plan.id)} style={{ background: "#111", color: "#fff", border: 0, borderRadius: 6, padding: "7px 9px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{isOpen ? "Cerrar paquete" : "Abrir paquete"}</button>
+            : <button onClick={() => createPacket(plan)} disabled={creatingPacket === plan.id} style={{ background: "#111", color: "#fff", border: 0, borderRadius: 6, padding: "7px 9px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{creatingPacket === plan.id ? "Creando…" : "Crear paquete de producción"}</button>)}
+        </div>
+      </div>
+      {!packetsConfigured && <div style={{ fontSize: 11, color: "#806B40", marginTop: 6 }}>Activa el Agente Productor: ejecuta <b>supabase/2026-08-08_tiktok_production_packets.sql</b> en Supabase.</div>}
+      {isOpen && packet && url && anonKey && accessToken && <TikTokProductionPacket key={`${packet.id}:${packet.updated_at}`} url={url} anonKey={anonKey} accessToken={accessToken} products={products} plan={plan} packet={packet} onSaved={load} onError={setError} onClose={() => setOpenPacketPlanId(null)} />}
+    </div>;
+  };
   const insightList = (title: string, insights: Insight[]) => <div style={{ flex: "1 1 220px", border: "1px solid #E5E5E5", borderRadius: 8, padding: 12, background: "#fff" }}>
     <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>{title}</div>
     {insights.length === 0 ? <div style={{ fontSize: 12, color: "#777" }}>Aún no hay videos clasificados en esta categoría.</div> : insights.slice(0, 3).map(insight => <div key={insight.label} style={{ borderTop: "1px solid #F0F0F0", paddingTop: 8, marginTop: 8 }}>
@@ -262,12 +309,13 @@ export const TikTokIntel: React.FC<TikTokProps> = ({ url, anonKey, accessToken, 
           </div>
           {plannedPlans.length > 0 && <div style={{ marginTop: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14 }}>Ideas planeadas ({plannedPlans.length})</div>
-            <div style={{ display: "grid", gap: 7, marginTop: 7 }}>{plannedPlans.map(plan => <div key={plan.id} style={{ background: "#fff", border: "1px solid #DCE6DF", borderRadius: 7, padding: "9px 10px", display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-              <div><b style={{ fontSize: 13 }}>{plan.title}</b><div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>{planProductNames(plan).join(" + ") || "Sin producto específico"} · {plan.format || "Sin formato"}</div></div>
-              <button onClick={() => updatePlanStatus(plan, "published")} disabled={savingPlan === plan.id} style={{ background: "#1F6B45", color: "#fff", border: 0, borderRadius: 6, padding: "7px 9px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{savingPlan === plan.id ? "Guardando…" : "Marcar publicada"}</button>
-            </div>)}</div>
+            <div style={{ display: "grid", gap: 7, marginTop: 7 }}>{plannedPlans.map(plan => renderPlanRow(plan, true))}</div>
           </div>}
-          {publishedPlans.length > 0 && <div style={{ fontSize: 12, color: "#4E6757", marginTop: 12 }}><b>{publishedPlans.length}</b> {publishedPlans.length === 1 ? "idea publicada" : "ideas publicadas"}. Cuando sincronices TikTok, clasifica el nuevo video para comparar su resultado.</div>}
+          {publishedPlans.length > 0 && <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Ideas publicadas ({publishedPlans.length})</div>
+            <p style={{ fontSize: 11, color: "#4E6757", margin: "2px 0 7px" }}>Cuando sincronices TikTok, clasifica el nuevo video para comparar su resultado.</p>
+            <div style={{ display: "grid", gap: 7 }}>{publishedPlans.map(plan => renderPlanRow(plan, false))}</div>
+          </div>}
         </>}
       </section>
       <h3 style={{ fontSize: 17 }}>Videos importados ({videos.length})</h3>
