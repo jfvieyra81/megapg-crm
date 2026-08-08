@@ -48,7 +48,12 @@ segundo a segundo en tabla, tomas, iluminación, audio, ubicación/vestuario/
 props, instrucciones de edición, caption/CTA/hashtags, los dos checklists y
 la nota de seguridad. Está pensada para papel Carta con márgenes normales;
 el navegador intenta no cortar una fila del guion o de tomas entre dos
-páginas.
+páginas. Con un paquete de contenido normal, el PDF queda en **2 páginas**:
+la nota de seguridad se acomoda justo después del checklist "Antes de
+publicar", al final de la página 2. Si el paquete tiene mucho contenido
+(guion muy largo, checklists muy largos, etc.), es normal que salga una
+tercera página — nunca se recorta ni se oculta información para forzar que
+quepa en menos páginas.
 
 Si el navegador bloquea la ventana emergente, el CRM muestra un aviso pidiendo
 permitir ventanas emergentes para el sitio y volver a intentarlo — no se pierde
@@ -56,6 +61,13 @@ ningún dato, solo hay que reintentar.
 
 No se usó ninguna librería nueva para esto: es HTML normal impreso con la
 función nativa `window.print()` del navegador.
+
+**Para un PDF limpio:** en el diálogo de impresión de Chrome, bajo "Más
+ajustes", desmarca la casilla **"Encabezados y pies de página"**. Si queda
+marcada, Chrome agrega su propio encabezado/pie (con la URL, la fecha y el
+título de la pestaña) en los márgenes de cada hoja — eso lo pone el
+navegador, no el CRM, así que no se puede quitar desde aquí; solo se
+desactiva desde esa casilla.
 
 ## Sin proveedor de IA (por ahora)
 
@@ -96,7 +108,7 @@ modificar los paquetes.
 
 **Antes de correr el SQL nuevo:**
 1. Entra al CRM como administrador → **TikTok** → confirma que dice **CRM
-   v5.36.0** arriba (si no, cierra y reabre la pestaña).
+   v5.36.1** arriba (si no, cierra y reabre la pestaña).
 2. En "Ideas planeadas" (o crea una idea nueva desde el Laboratorio si no hay
    ninguna), cada tarjeta debe mostrar la nota amarilla "Activa el Agente
    Productor: ejecuta supabase/2026-08-08_tiktok_production_packets.sql" en
@@ -126,3 +138,8 @@ modificar los paquetes.
    navegador para confirmar que se genera bien.
 9. Cierra la ventana de impresión y confirma que el paquete en el CRM sigue
    editable y que su estado no cambió (exportar no guarda ni modifica nada).
+10. Con un paquete de contenido normal, confirma en la vista previa de
+    impresión que la nota de seguridad queda al final de la **página 2**
+    (justo después del checklist "Antes de publicar"), no sola en una
+    tercera página casi vacía. Confirma también que todo el contenido sigue
+    presente y legible.

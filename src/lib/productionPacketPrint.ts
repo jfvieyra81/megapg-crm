@@ -87,8 +87,8 @@ export const buildPrintableHtml = (params: {
   td.seg { white-space: nowrap; font-weight: 700; color: #1F6B45; width: 70px; }
   ul { margin: 4px 0 0; padding-left: 18px; }
   li { margin-bottom: 3px; }
-  .safety { background: #FDF2F2; border: 1px solid #F3C6C1; border-radius: 6px; padding: 10px; }
-  .safety h2 { color: #8A2A22; border-bottom-color: #F3C6C1; }
+  .safety { background: #FDF2F2; border: 1px solid #F3C6C1; border-radius: 6px; padding: 10px; break-inside: auto; page-break-inside: auto; }
+  .safety h2 { color: #8A2A22; border-bottom-color: #F3C6C1; break-after: avoid; page-break-after: avoid; }
   footer.doc-footer { margin-top: 22px; padding-top: 8px; border-top: 1px solid #DDD; font-size: 10px; color: #999; text-align: center; }
 </style>
 </head>
